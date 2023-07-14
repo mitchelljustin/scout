@@ -59,22 +59,20 @@ pub struct Environment<'a> {
 }
 
 macro builtins($(
-    fn $fn_name:ident($env: ident, $args:ident) $body:tt
+    fn $fn_name:ident($env:ident, $args:ident) $body:tt
 )+) {
     [
         $(
             (
                 stringify!($fn_name).to_string(),
-                Builtin(|$env, $args| {
-                    $body
-                }),
+                Builtin(|$env, $args| $body),
             ),
         )+
     ]
 }
 
 impl<'a> Environment<'a> {
-    fn init_functions() -> HashMap<String, Function<'a>> {
+    fn initial_functions() -> HashMap<String, Function<'a>> {
         HashMap::from(builtins![
             fn print(_env, args) {
                 let num_args = args.len();
@@ -105,7 +103,7 @@ impl<'a> Environment<'a> {
     pub fn new() -> Environment<'a> {
         Environment {
             variables: HashMap::new(),
-            functions: Self::init_functions(),
+            functions: Self::initial_functions(),
         }
     }
 
