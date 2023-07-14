@@ -1,0 +1,66 @@
+//
+// Created by intellij-pest on 2023-07-13
+// scout
+// Author: mitch
+//
+
+program = {
+    SOI ~
+    expr* ~
+    EOI
+}
+
+expr = {
+    ("do" ~ expr+ ~ "end") |
+    func_def |
+    var_def |
+    call |
+    number |
+    string |
+    ident
+}
+
+func_def = {
+    call ~ "=" ~ expr
+}
+
+var_def = {
+    ident ~ "=" ~ expr
+}
+
+call = {
+    ident ~ "(" ~ arg_list ~ ")"
+}
+
+arg_list = {
+    (expr ~ ("," ~ expr)*) | ""
+}
+
+literal = {
+    number | string | bool | nil
+}
+
+bool = @{ "true" | "false" }
+nil = @{ "nil" }
+
+ident = @{
+//     !(KEYWORD ~ !XID_START) ~
+    XID_START ~ XID_CONTINUE*
+}
+
+number = @{
+    "-"? ~
+    integer ~
+    ("." ~ mantissa)?
+}
+integer = _{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT }
+mantissa = _{ ASCII_DIGIT+ }
+
+string = @{
+    "\"" ~ string_inner ~ "\""
+}
+
+string_inner = _{(!"\"" ~ ANY)*}
+
+WHITESPACE = _{ " " | "\n" }
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
