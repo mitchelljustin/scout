@@ -34,7 +34,7 @@ impl Display for Value {
 
 #[derive(Clone)]
 enum Function<'a> {
-    Builtin(fn(&mut Environment, &[Value]) -> Value),
+    Builtin(fn(&mut Environment, Vec<Value>) -> Value),
     User {
         params: Vec<String>,
         body: Pair<'a, Rule>,
@@ -46,21 +46,56 @@ pub struct Environment<'a> {
     functions: HashMap<String, Function<'a>>,
 }
 
+macro builtins($(
+    fn $fn_name:ident($env: ident, $args:ident) {
+        $body:tt
+    }
+)+) {
+    [
+        $(
+            (
+                stringify!($fn_name).to_string(),
+                Builtin(|$env, $args| {
+                    $body
+                }),
+            ),
+        )+
+    ]
+}
+
 impl<'a> Environment<'a> {
     fn init_functions() -> HashMap<String, Function<'a>> {
-        HashMap::from([(
-            "print".to_string(),
-            Builtin(|_env, args: &[Value]| {
-                for (i, arg) in args.iter().enumerate() {
-                    print!("{arg}");
-                    if i < args.len() - 1 {
-                        print!(" ");
+        HashMap::from([
+            (
+                "print".to_string(),
+                Builtin(|_env, args| {
+                    let num_args = args.len();
+                    for (i, arg) in args.into_iter().enumerate() {
+                        print!("{arg}");
+                        if i < num_args - 1 {
+                            print!(" ");
+                        }
                     }
-                }
-                println!();
-                Nil
-            }),
-        )])
+                    println!();
+                    Nil
+                }),
+            ),
+            (
+                "add".to_string(),
+                Builtin(|_env, args| {
+                    if args.is_empty() {
+                        return Nil;
+                    }
+                    args.into_iter().fold(Value::Number(0.0), |acc, arg| {
+                        if let (Value::Number(acc), Value::Number(val)) = (acc, arg) {
+                            Value::Number(acc + val)
+                        } else {
+                            Nil
+                        }
+                    })
+                }),
+            ),
+        ])
     }
 
     pub fn new() -> Environment<'a> {
@@ -119,13 +154,13 @@ impl<'a> Environment<'a> {
 
     fn do_call(&mut self, function: Function, args: Vec<Value>) -> Value {
         match function {
-            Builtin(function) => function(self, &args),
+            Builtin(function) => function(self, args),
             Function::User { params, body } => {
                 if args.len() != params.len() {
                     return Nil;
                 }
-                for (param, arg) in params.iter().zip(args.into_iter()) {
-                    self.variables.insert(param.clone(), arg);
+                for (param, arg) in params.iter().zip(args) {
+                    self.variables.insert(param.clone(), arg); // todo: scoping
                 }
                 self.eval(body.clone())
             }

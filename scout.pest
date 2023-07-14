@@ -15,8 +15,7 @@ expr = {
     func_def |
     var_def |
     call |
-    number |
-    string |
+    literal |
     ident
 }
 
