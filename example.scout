@@ -1,3 +1,6 @@
 x = 3
-y(x) = add(x, 9)
-print(y(x))
+fn plus(x, y) = do
+    a = add(x, x);
+    add(y, a, 1)
+end
+print(plus(x, 9))

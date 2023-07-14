@@ -11,7 +11,7 @@ program = {
 }
 
 expr = {
-    ("do" ~ expr+ ~ "end") |
+    multiline_expr |
     func_def |
     var_def |
     call |
@@ -19,8 +19,12 @@ expr = {
     ident
 }
 
+multiline_expr = {
+    "do" ~ (expr ~ ";") ~ expr ~ "end"
+}
+
 func_def = {
-    call ~ "=" ~ expr
+    "fn" ~ ident ~ "(" ~ param_list ~ ")" ~ "=" ~ expr
 }
 
 var_def = {
@@ -29,6 +33,10 @@ var_def = {
 
 call = {
     ident ~ "(" ~ arg_list ~ ")"
+}
+
+param_list = {
+    (ident ~ ("," ~ ident)*) | ""
 }
 
 arg_list = {
@@ -42,8 +50,10 @@ literal = {
 bool = @{ "true" | "false" }
 nil = @{ "nil" }
 
+KEYWORD = @{ "fn" | "do" | "end" }
+
 ident = @{
-//     !(KEYWORD ~ !XID_START) ~
+    !(KEYWORD ~ !XID_START) ~
     XID_START ~ XID_CONTINUE*
 }
 

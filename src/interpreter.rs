@@ -32,6 +32,18 @@ impl Display for Value {
     }
 }
 
+fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
+    println!(
+        "{}{:?} '{}'",
+        "| ".repeat(indent_level),
+        pair.as_rule(),
+        pair.as_str().replace('\n', "\\n")
+    );
+    for child in pair.into_inner() {
+        pretty_print_pair(child, indent_level + 1);
+    }
+}
+
 #[derive(Clone)]
 enum Function<'a> {
     Builtin(fn(&mut Environment, Vec<Value>) -> Value),
@@ -47,9 +59,7 @@ pub struct Environment<'a> {
 }
 
 macro builtins($(
-    fn $fn_name:ident($env: ident, $args:ident) {
-        $body:tt
-    }
+    fn $fn_name:ident($env: ident, $args:ident) $body:tt
 )+) {
     [
         $(
@@ -65,36 +75,30 @@ macro builtins($(
 
 impl<'a> Environment<'a> {
     fn init_functions() -> HashMap<String, Function<'a>> {
-        HashMap::from([
-            (
-                "print".to_string(),
-                Builtin(|_env, args| {
-                    let num_args = args.len();
-                    for (i, arg) in args.into_iter().enumerate() {
-                        print!("{arg}");
-                        if i < num_args - 1 {
-                            print!(" ");
-                        }
+        HashMap::from(builtins![
+            fn print(_env, args) {
+                let num_args = args.len();
+                for (i, arg) in args.into_iter().enumerate() {
+                    print!("{arg}");
+                    if i < num_args - 1 {
+                        print!(" ");
                     }
-                    println!();
-                    Nil
-                }),
-            ),
-            (
-                "add".to_string(),
-                Builtin(|_env, args| {
-                    if args.is_empty() {
-                        return Nil;
+                }
+                println!();
+                Nil
+            }
+            fn add(_env, args) {
+                if args.is_empty() {
+                    return Nil;
+                }
+                args.into_iter().fold(Value::Number(0.0), |acc, arg| {
+                    if let (Value::Number(acc), Value::Number(val)) = (acc, arg) {
+                        Value::Number(acc + val)
+                    } else {
+                        Nil
                     }
-                    args.into_iter().fold(Value::Number(0.0), |acc, arg| {
-                        if let (Value::Number(acc), Value::Number(val)) = (acc, arg) {
-                            Value::Number(acc + val)
-                        } else {
-                            Nil
-                        }
-                    })
-                }),
-            ),
+                })
+            }
         ])
     }
 
@@ -105,18 +109,28 @@ impl<'a> Environment<'a> {
         }
     }
 
-    pub fn eval_source(&mut self, source: &str) -> anyhow::Result<()> {
+    pub fn eval_source(&mut self, source: &'a str) -> anyhow::Result<()> {
         let program = ScoutParser::parse(Rule::program, source)?.next().unwrap();
+        pretty_print_pair(program.clone(), 0);
         self.eval(program);
         Ok(())
     }
 
-    fn eval(&mut self, pair: Pair<Rule>) -> Value {
+    fn eval(&mut self, pair: Pair<'a, Rule>) -> Value {
         match pair.as_rule() {
-            Rule::program => pair.into_inner().fold(Nil, |_, expr| self.eval(expr)),
+            Rule::program | Rule::multiline_expr => {
+                pair.into_inner().fold(Nil, |_, expr| self.eval(expr))
+            }
             Rule::expr => self.eval(pair.into_inner().next().unwrap()),
             Rule::func_def => {
-                let [call, expr] = pair.into_inner().next_chunk().unwrap();
+                let [func_name, param_list, body] = pair.into_inner().next_chunk().unwrap();
+                let func_name = func_name.as_str().to_string();
+                let params = param_list
+                    .into_inner()
+                    .map(|p| p.as_str().to_string())
+                    .collect();
+                self.functions
+                    .insert(func_name, Function::User { params, body });
                 Nil
             }
             Rule::var_def => {
@@ -152,7 +166,7 @@ impl<'a> Environment<'a> {
         }
     }
 
-    fn do_call(&mut self, function: Function, args: Vec<Value>) -> Value {
+    fn do_call(&mut self, function: Function<'a>, args: Vec<Value>) -> Value {
         match function {
             Builtin(function) => function(self, args),
             Function::User { params, body } => {
