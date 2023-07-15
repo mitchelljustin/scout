@@ -1,17 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
-use pest::iterators::Pair;
-use pest::Parser;
-use pest_derive::Parser;
-
 use Value::Nil;
 
+use crate::ast::{Expr, Program, Stmt};
 use crate::interpreter::Function::Builtin;
-
-#[derive(Parser)]
-#[grammar = "scout.pest"]
-struct ScoutParser;
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -19,6 +12,31 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(String),
+    Error(String),
+}
+
+pub enum ModuleItem {
+    Module { items: Vec<ModuleItem> },
+    FunctionDef(FunctionDef),
+    VariableDef { name: String, value: Value },
+}
+
+#[derive(Clone)]
+struct FunctionDef {
+    name: String,
+    params: Vec<String>,
+    body: Expr,
+}
+
+#[derive(Clone)]
+enum Function {
+    Builtin(fn(&mut Environment, Vec<Value>) -> Value),
+    User(FunctionDef),
+}
+
+pub struct Environment {
+    variables: HashMap<String, Value>,
+    functions: HashMap<String, Function>,
 }
 
 impl Display for Value {
@@ -28,34 +46,9 @@ impl Display for Value {
             Value::Bool(val) => write!(f, "{val}"),
             Value::Number(val) => write!(f, "{val}"),
             Value::String(val) => write!(f, "{val}"),
+            Value::Error(val) => write!(f, "error({val})"),
         }
     }
-}
-
-fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
-    println!(
-        "{}{:?} '{}'",
-        "| ".repeat(indent_level),
-        pair.as_rule(),
-        pair.as_str().replace('\n', "\\n")
-    );
-    for child in pair.into_inner() {
-        pretty_print_pair(child, indent_level + 1);
-    }
-}
-
-#[derive(Clone)]
-enum Function<'a> {
-    Builtin(fn(&mut Environment, Vec<Value>) -> Value),
-    User {
-        params: Vec<String>,
-        body: Pair<'a, Rule>,
-    },
-}
-
-pub struct Environment<'a> {
-    variables: HashMap<String, Value>,
-    functions: HashMap<String, Function<'a>>,
 }
 
 macro builtins($(
@@ -71,8 +64,8 @@ macro builtins($(
     ]
 }
 
-impl<'a> Environment<'a> {
-    fn initial_functions() -> HashMap<String, Function<'a>> {
+impl Environment {
+    fn initial_functions() -> HashMap<String, Function> {
         HashMap::from(builtins![
             fn print(_env, args) {
                 let num_args = args.len();
@@ -112,76 +105,42 @@ impl<'a> Environment<'a> {
         ])
     }
 
-    pub fn new() -> Environment<'a> {
+    pub fn new() -> Environment {
         Environment {
             variables: HashMap::new(),
             functions: Self::initial_functions(),
         }
     }
 
-    pub fn eval_source(&mut self, source: &'a str) -> anyhow::Result<()> {
-        let program = ScoutParser::parse(Rule::program, source)?.next().unwrap();
-        pretty_print_pair(program.clone(), 0);
-        self.eval(program);
+    pub fn exec_source(&mut self, source: &str) -> anyhow::Result<()> {
+        let Program { body } = source.parse()?;
+        for stmt in body {
+            self.exec(stmt);
+        }
         Ok(())
     }
 
-    fn eval(&mut self, pair: Pair<'a, Rule>) -> Value {
-        match pair.as_rule() {
-            Rule::program | Rule::multiline_expr => {
-                pair.into_inner().fold(Nil, |_, expr| self.eval(expr))
-            }
-            Rule::expr => self.eval(pair.into_inner().next().unwrap()),
-            Rule::func_def => {
-                let [func_name, param_list, body] = pair.into_inner().next_chunk().unwrap();
-                let func_name = func_name.as_str().to_string();
-                let params = param_list
-                    .into_inner()
-                    .map(|p| p.as_str().to_string())
-                    .collect();
-                self.functions
-                    .insert(func_name, Function::User { params, body });
-                Nil
-            }
-            Rule::var_def => {
-                let [target, value] = pair.into_inner().next_chunk().unwrap();
-                let value = self.eval(value);
-                self.variables
-                    .insert(target.as_str().to_string(), value.clone());
-                value
-            }
-            Rule::call => {
-                let [func_name, arg_list] = pair.into_inner().next_chunk().unwrap();
-                let func_name = func_name.as_str();
-                let Some(function) = self.functions.get(func_name).cloned() else {
-                    return Nil;
-                };
-                let args: Vec<Value> = arg_list.into_inner().map(|arg| self.eval(arg)).collect();
-                self.do_call(function, args)
-            }
-            Rule::literal => self.eval(pair.into_inner().next().unwrap()),
-            Rule::ident => self.variables.get(pair.as_str()).cloned().unwrap_or(Nil),
-            Rule::number => match pair.as_str().parse::<f64>() {
-                Ok(val) => Value::Number(val),
-                Err(_) => Nil,
-            },
-            Rule::nil => Nil,
-            Rule::bool => Value::Bool(match pair.as_str() {
-                "true" => true,
-                "false" => false,
-                _ => unreachable!(),
-            }),
-            Rule::string => {
-                Value::String(pair.into_inner().next().expect("what").as_str().to_string())
-            }
-            _ => Nil,
+    fn exec(&mut self, stmt: Stmt) {
+        match stmt {
+            Stmt::Module { .. } => {}
+            Stmt::FunctionDef { .. } => {}
+            Stmt::VariableDef { .. } => {}
         }
     }
 
-    fn do_call(&mut self, function: Function<'a>, args: Vec<Value>) -> Value {
+    fn eval(&mut self, expr: Expr) -> Value {
+        match expr {
+            Expr::Multiline { body } => body.into_iter().fold(Nil, |_, expr| self.eval(expr)),
+            Expr::Variable { path } => {}
+            Expr::Literal { .. } => {}
+            Expr::Call { .. } => {}
+        }
+    }
+
+    fn do_call(&mut self, function: Function, args: Vec<Value>) -> Value {
         match function {
             Builtin(function) => function(self, args),
-            Function::User { params, body } => {
+            Function::User(FunctionDef { params, body, .. }) => {
                 if args.len() != params.len() {
                     return Nil;
                 }

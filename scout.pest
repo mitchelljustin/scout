@@ -6,25 +6,44 @@
 
 program = {
     SOI ~
-    (expr ~ NEWLINE)* ~
+    stmts ~
     EOI
+}
+
+stmts = {
+    (stmt ~ NEWLINE)*
+}
+
+stmt = {
+    func_def |
+    var_def |
+    mod_def |
+    expr
+}
+
+mod_def = {
+    "mod" ~ path ~ stmts ~ "end"
 }
 
 expr = {
     multiline_expr |
-    func_def |
-    var_def |
     call |
     literal |
-    ident
+    var_ref
 }
 
+var_ref = { ident }
+
 multiline_expr = {
-    "do" ~ NEWLINE ~ (expr ~ NEWLINE)* ~ "end"
+    "do" ~ NEWLINE ~ ((stmt | return_stmt) ~ NEWLINE)* ~ "end"
+}
+
+return_stmt = {
+    "return" ~ expr
 }
 
 func_def = {
-    "fn" ~ path ~ "(" ~ param_list ~ ")" ~ "=" ~ expr
+    "fn" ~ ident ~ "(" ~ param_list ~ ")" ~ "=" ~ expr
 }
 
 var_def = {
@@ -58,7 +77,7 @@ literal = {
 bool = @{ "true" | "false" }
 nil = @{ "nil" }
 
-KEYWORD = @{ "fn" | "do" | "end" }
+KEYWORD = @{ "fn" | "do" | "end" | "mod" }
 
 ident = @{
     !(KEYWORD ~ !XID_START) ~
