@@ -64,7 +64,7 @@ macro builtins($(
     [
         $(
             (
-                stringify!($fn_name).to_string(),
+                "std::".to_string() + stringify!($fn_name),
                 Builtin(|$env, $args| $body),
             ),
         )+
@@ -92,6 +92,18 @@ impl<'a> Environment<'a> {
                 args.into_iter().fold(Value::Number(0.0), |acc, arg| {
                     if let (Value::Number(acc), Value::Number(val)) = (acc, arg) {
                         Value::Number(acc + val)
+                    } else {
+                        Nil
+                    }
+                })
+            }
+            fn concat(_env, args) {
+                if args.is_empty() {
+                    return Nil;
+                }
+                args.into_iter().fold(Value::String(String::new()), |acc, arg| {
+                    if let (Value::String(acc), Value::String(val)) = (acc, arg) {
+                        Value::String(acc + &val)
                     } else {
                         Nil
                     }
@@ -159,7 +171,9 @@ impl<'a> Environment<'a> {
                 "false" => false,
                 _ => unreachable!(),
             }),
-            Rule::string => Value::String(pair.into_inner().next().unwrap().as_str().to_string()),
+            Rule::string => {
+                Value::String(pair.into_inner().next().expect("what").as_str().to_string())
+            }
             _ => Nil,
         }
     }

@@ -6,7 +6,7 @@
 
 program = {
     SOI ~
-    expr* ~
+    (expr ~ NEWLINE)* ~
     EOI
 }
 
@@ -20,11 +20,11 @@ expr = {
 }
 
 multiline_expr = {
-    "do" ~ (expr ~ ";") ~ expr ~ "end"
+    "do" ~ NEWLINE ~ (expr ~ NEWLINE)* ~ "end"
 }
 
 func_def = {
-    "fn" ~ ident ~ "(" ~ param_list ~ ")" ~ "=" ~ expr
+    "fn" ~ path ~ "(" ~ param_list ~ ")" ~ "=" ~ expr
 }
 
 var_def = {
@@ -32,7 +32,15 @@ var_def = {
 }
 
 call = {
-    ident ~ "(" ~ arg_list ~ ")"
+    path ~ "(" ~ arg_list ~ ")"
+}
+
+path = {
+    ident ~ ("::" ~ ident)*
+}
+
+binary_op = {
+    "+"
 }
 
 param_list = {
@@ -69,7 +77,7 @@ string = @{
     "\"" ~ string_inner ~ "\""
 }
 
-string_inner = _{(!"\"" ~ ANY)*}
+string_inner = ${(!"\"" ~ ANY)*}
 
-WHITESPACE = _{ " " | "\n" }
+WHITESPACE = _{ " " }
 COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
