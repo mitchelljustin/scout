@@ -1,8 +1,10 @@
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
+
 use anyhow::anyhow;
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
-use std::str::FromStr;
 
 #[derive(Parser)]
 #[grammar = "scout.pest"]
@@ -10,18 +12,24 @@ struct ScoutParser;
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    body: Vec<Stmt>,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Path(Vec<String>);
+pub struct Path(pub(crate) Vec<String>);
+
+impl Display for Path {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.clone().join("::"))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Expr {
     Multiline { body: Vec<Stmt> },
     Variable { path: Path },
     Literal { value: Literal },
-    Call { target: Path, args: Vec<Expr> },
+    Call { path: Path, args: Vec<Expr> },
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +42,7 @@ pub enum Literal {
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Module {
+    ModuleDef {
         name: String,
         body: Vec<Stmt>,
     },
@@ -49,6 +57,9 @@ pub enum Stmt {
     },
     Return {
         retval: Expr,
+    },
+    Expr {
+        expr: Expr,
     },
 }
 
@@ -69,7 +80,7 @@ impl FromStr for Program {
 
     fn from_str(source: &str) -> Result<Self, Self::Err> {
         let pair = ScoutParser::parse(Rule::program, source)?.next().unwrap();
-        pretty_print_pair(pair, 0);
+        pretty_print_pair(pair.clone(), 0);
         pair.try_into()
     }
 }

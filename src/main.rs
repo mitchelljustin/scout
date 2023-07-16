@@ -1,5 +1,6 @@
 #![feature(iter_next_chunk)]
 #![feature(decl_macro)]
+#![feature(map_try_insert)]
 
 use std::fs;
 
