@@ -27,7 +27,7 @@ impl Display for Path {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Multiline { body: Vec<Stmt> },
-    Variable { path: Path },
+    Variable { name: String },
     Literal { value: Literal },
     Call { path: Path, args: Vec<Expr> },
 }
@@ -92,7 +92,8 @@ impl TryFrom<Pair<'_, Rule>> for Program {
         let Rule::program = pair.as_rule() else {
             return Err(anyhow!("expected program"));
         };
-        let body = pair
+        let inner = pair.into_inner().next().unwrap();
+        let body = inner
             .into_inner()
             .map(Stmt::try_from)
             .collect::<Result<Vec<_>, _>>()?;
@@ -104,7 +105,9 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
     type Error = anyhow::Error;
 
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
-        match pair.as_rule() {
+        let rule = pair.as_rule();
+        match rule {
+            Rule::stmt => pair.into_inner().next().unwrap().try_into(),
             Rule::func_def => {
                 let [name, params, body] = pair.into_inner().next_chunk().unwrap();
                 let name = name.as_str().to_string();
@@ -122,8 +125,17 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                 let value = value.try_into()?;
                 Ok(Stmt::VariableDef { name, value })
             }
-
-            _ => Err(anyhow!("expected statement pair")),
+            Rule::mod_def => {
+                let mut inner = pair.into_inner();
+                let name = inner.next().unwrap().as_str().to_string();
+                let body = inner.map(Stmt::try_from).collect::<Result<_, _>>()?;
+                Ok(Stmt::ModuleDef { name, body })
+            }
+            Rule::expr => {
+                let expr = pair.into_inner().next().unwrap().try_into()?;
+                Ok(Stmt::Expr { expr })
+            }
+            _ => Err(anyhow!("expected statement")),
         }
     }
 }
@@ -132,8 +144,47 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
     type Error = anyhow::Error;
 
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
-        match pair.as_rule() {
-            _ => Err(anyhow!("expected expression pair")),
+        let rule = pair.as_rule();
+        match rule {
+            Rule::expr => pair.into_inner().next().unwrap().try_into(),
+            Rule::multiline_expr => {
+                let body = pair
+                    .into_inner()
+                    .map(Stmt::try_from)
+                    .collect::<Result<_, _>>()?;
+                Ok(Expr::Multiline { body })
+            }
+            Rule::call => {
+                let [path, args] = pair.into_inner().next_chunk().unwrap();
+                let path = Path(
+                    path.into_inner()
+                        .map(|component| component.as_str().to_string())
+                        .collect(),
+                );
+                let args = args
+                    .into_inner()
+                    .map(Expr::try_from)
+                    .collect::<Result<_, _>>()?;
+                Ok(Expr::Call { path, args })
+            }
+            Rule::literal => {
+                let inner = pair.into_inner().next().unwrap();
+                let value = match inner.as_rule() {
+                    Rule::number => Literal::Number(inner.as_str().parse()?),
+                    Rule::string => {
+                        Literal::String(inner.into_inner().next().unwrap().as_str().to_string())
+                    }
+                    Rule::bool => Literal::Bool(inner.as_str() == "true"),
+                    Rule::nil => Literal::Nil,
+                    _ => unreachable!(),
+                };
+                Ok(Expr::Literal { value })
+            }
+            Rule::var_ref => {
+                let name = pair.into_inner().next().unwrap().as_str().to_string();
+                Ok(Expr::Variable { name })
+            }
+            _ => Err(anyhow!("expected expression")),
         }
     }
 }

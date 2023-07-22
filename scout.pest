@@ -22,7 +22,7 @@ stmt = {
 }
 
 mod_def = {
-    "mod" ~ path ~ stmts ~ "end"
+    "mod" ~ ident ~ NEWLINE ~ (func_def ~ NEWLINE)* ~ "end"
 }
 
 expr = {

@@ -1,7 +1,6 @@
 x = 3
-fn plus(x, y) = do
-    a = std::add(x, x)
-    std::add(y, a, 1)
-end
 yoloswag = std::concat("yolo", "swag")
-std::print(plus(x, 9), yoloswag)
+mod mitch
+    fn plus(x, y) = std::add(x, y, 100)
+end
+std::print(mitch::plus(x, 9), yoloswag)

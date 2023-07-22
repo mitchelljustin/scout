@@ -2,6 +2,8 @@
 #![feature(decl_macro)]
 #![feature(map_try_insert)]
 
+extern crate core;
+
 use std::fs;
 
 use crate::interpreter::Environment;

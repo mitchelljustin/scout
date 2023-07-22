@@ -31,21 +31,28 @@ pub enum Function {
     User(UserFunction),
 }
 
-pub struct Environment {
-    modules: HashMap<String, Module>,
-    open_module_name: String,
-}
-
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Module {
     name: String,
     items: HashMap<String, ModuleItem>,
 }
 
+#[derive(Clone)]
 pub enum ModuleItem {
     Function(Function),
     Variable(Value),
     Module(Module),
+}
+
+pub struct Scope {
+    name: String,
+    variables: HashMap<String, Value>,
+}
+
+pub struct Environment {
+    modules: HashMap<String, Module>,
+    current_module_name: String,
+    scope_stack: Vec<Scope>,
 }
 
 impl Display for Value {
@@ -166,30 +173,51 @@ impl Module {
             ModuleItem::Function(Function::User(function)),
         )
     }
-
-    pub fn define_variable(&mut self, name: String, value: Value) -> anyhow::Result<()> {
-        self.define_item("variable", name.clone(), ModuleItem::Variable(value))
-    }
 }
 
 impl Environment {
-    fn resolve(&self, path: Path) -> anyhow::Result<&ModuleItem> {
-        let Ok([module_name, item_name]) = <[String; 2]>::try_from(path.0) else {
-            return Err(anyhow!("only supports two-part paths for now"));
-        };
-        let Some(module) = self.modules.get(&module_name) else {
-            return Err(anyhow!("no such module: '{module_name}'"));
-        };
-        let Some(item) = module.items.get(&item_name) else {
+    fn resolve_item(&self, path: &Path) -> anyhow::Result<&ModuleItem> {
+        match &path.0.as_slice() {
+            [item_name] => self.get_item_from_module(item_name, self.current_module()),
+            [module_name, item_name] => {
+                let Some(module) = self.modules.get(module_name) else {
+                    return Err(anyhow!("no such module: '{module_name}'"));
+                };
+                self.get_item_from_module(item_name, module)
+            }
+            _ => Err(anyhow!("can only support `item` or `mod::item`")),
+        }
+    }
+
+    fn get_item_from_module<'a>(
+        &self,
+        item_name: &str,
+        module: &'a Module,
+    ) -> anyhow::Result<&'a ModuleItem> {
+        let Some(item) = module.items.get(item_name) else {
             return Err(anyhow!(
-                "no such item in module '{module_name}': '{module_name}'"
+                "no such item in module '{}': '{item_name}'",
+                module.name
             ));
         };
         Ok(item)
     }
 
-    fn open_module(&mut self) -> &mut Module {
-        self.modules.get_mut(&self.open_module_name).unwrap()
+    fn resolve_var(&self, name: &str) -> anyhow::Result<&Value> {
+        for scope in self.scope_stack.iter() {
+            if let Some(value) = scope.variables.get(name) {
+                return Ok(value);
+            }
+        }
+        Err(anyhow!("no such variable: '{name}'"))
+    }
+
+    fn current_module(&self) -> &Module {
+        self.modules.get(&self.current_module_name).unwrap()
+    }
+
+    fn current_module_mut(&mut self) -> &mut Module {
+        self.modules.get_mut(&self.current_module_name).unwrap()
     }
 
     fn define_module(&mut self, name: String) -> anyhow::Result<&mut Module> {
@@ -202,8 +230,10 @@ impl Environment {
     pub fn new() -> Environment {
         let mut env = Environment {
             modules: Default::default(),
-            open_module_name: MODULE_MAIN.to_string(),
+            current_module_name: MODULE_MAIN.to_string(),
+            scope_stack: Default::default(),
         };
+        env.push_scope("GLOBAL".to_string());
         env.define_module(MODULE_MAIN.to_string()).unwrap();
         let module_std = env.define_module(MODULE_STD.to_string()).unwrap();
         for (name, function) in builtin::NATIVE_FUNCTIONS {
@@ -226,19 +256,25 @@ impl Environment {
     fn exec(&mut self, stmt: Stmt) -> anyhow::Result<()> {
         match stmt {
             Stmt::ModuleDef { name, body } => {
+                if self.current_module_name != MODULE_MAIN {
+                    return Err(anyhow!("can only define module at top level"));
+                }
                 self.define_module(name.clone())?;
-                self.open_module_name = name;
+                self.current_module_name = name;
                 for stmt in body {
                     self.exec(stmt)?;
                 }
             }
             Stmt::FunctionDef { body, name, params } => {
-                self.open_module()
+                self.current_module_mut()
                     .define_function(UserFunction { name, params, body })?;
             }
             Stmt::VariableDef { name, value } => {
                 let value = self.eval(value)?;
-                self.open_module().define_variable(name, value)?;
+                let Some(scope) = self.scope_stack.last_mut() else {
+                    return Err(anyhow!("no scope"));
+                };
+                scope.variables.insert(name, value);
             }
             Stmt::Return { .. } => return Err(anyhow!("return outside of multiline expression")),
             Stmt::Expr { expr } => {
@@ -248,13 +284,21 @@ impl Environment {
         Ok(())
     }
 
+    fn define_variable(&mut self, name: String, value: Value) -> anyhow::Result<()> {
+        let Some(scope) = self.scope_stack.last_mut() else {
+            return Err(anyhow!("variable defined outside of a scope"));
+        };
+        scope.variables.insert(name, value);
+        Ok(())
+    }
+
     fn eval(&mut self, expr: Expr) -> anyhow::Result<Value> {
         match expr {
             Expr::Multiline { body } => {
                 let last_index = body.len() - 1;
                 for (i, stmt) in body.into_iter().enumerate() {
                     match stmt {
-                        Stmt::Return { retval: expr } => return self.eval(expr),
+                        Stmt::Return { retval } => return self.eval(retval),
                         Stmt::Expr { expr } if i == last_index => return self.eval(expr),
                         stmt => {
                             self.exec(stmt)?;
@@ -263,11 +307,8 @@ impl Environment {
                 }
                 Ok(Nil)
             }
-            Expr::Variable { path } => {
-                let error = anyhow!("not a variable: '{path}'");
-                let ModuleItem::Variable(value) = self.resolve(path)? else {
-                    return Err(error);
-                };
+            Expr::Variable { name } => {
+                let value = self.resolve_var(&name)?;
                 Ok(value.clone())
             }
             Expr::Literal { value } => Ok(match value {
@@ -277,19 +318,44 @@ impl Environment {
                 Literal::String(value) => Value::String(value),
             }),
             Expr::Call { path, args } => {
-                let error = anyhow!("not a function: '{path}'");
-                let ModuleItem::Function(function) = self.resolve(path)? else {
-                    return Err(error);
-                };
                 let args = args
                     .into_iter()
                     .map(|arg| self.eval(arg))
                     .collect::<Result<Vec<_>, _>>()?;
-                match function {
+                let ModuleItem::Function(function) = self.resolve_item(&path)? else {
+                    return Err(anyhow!("not a function: '{path}'"));
+                };
+                match function.clone() {
                     Function::Native(native_function) => native_function(self, args),
-                    Function::User(UserFunction { name, params, body }) => {}
+                    Function::User(UserFunction { name, params, body }) => {
+                        if args.len() != params.len() {
+                            return Err(anyhow!(
+                                "arity mismatch, expected {}, got {}",
+                                params.len(),
+                                args.len()
+                            ));
+                        }
+                        self.push_scope(format!("fn {name}({})", params.len()));
+                        for (arg, param) in args.into_iter().zip(params) {
+                            self.define_variable(param.clone(), arg)?;
+                        }
+                        let retval = self.eval(body.clone())?;
+                        self.pop_scope();
+                        Ok(retval)
+                    }
                 }
             }
         }
+    }
+
+    fn pop_scope(&mut self) {
+        self.scope_stack.pop();
+    }
+
+    fn push_scope(&mut self, name: String) {
+        self.scope_stack.push(Scope {
+            name,
+            variables: Default::default(),
+        });
     }
 }
