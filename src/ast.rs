@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::hash::Hash;
 use std::str::FromStr;
 
 use anyhow::anyhow;
@@ -26,10 +28,24 @@ impl Display for Path {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Multiline { body: Vec<Stmt> },
-    Variable { name: String },
-    Literal { value: Literal },
-    Call { path: Path, args: Vec<Expr> },
+    Multiline {
+        body: Vec<Stmt>,
+    },
+    Variable {
+        name: String,
+    },
+    Literal {
+        value: Literal,
+    },
+    Call {
+        path: Path,
+        args: Vec<Expr>,
+    },
+    If {
+        condition: Box<Expr>,
+        then_body: Vec<Stmt>,
+        else_body: Option<Vec<Stmt>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -66,12 +82,38 @@ pub enum Stmt {
 fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
     println!(
         "{}{:?} '{}'",
-        "| ".repeat(indent_level),
+        "  ".repeat(indent_level),
         pair.as_rule(),
         pair.as_str().replace('\n', "\\n")
     );
     for child in pair.into_inner() {
         pretty_print_pair(child, indent_level + 1);
+    }
+}
+
+trait PairExt<'a, R: Hash + Eq> {
+    fn into_by_rule(self) -> HashMap<R, Vec<Pair<'a, R>>>;
+    fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
+    where
+        T: TryFrom<Pair<'a, Rule>>,
+        Col: FromIterator<T>;
+}
+
+impl<'a> PairExt<'a, Rule> for Pair<'a, Rule> {
+    fn into_by_rule(self) -> HashMap<Rule, Vec<Pair<'a, Rule>>> {
+        let mut map = HashMap::<_, Vec<_>>::new();
+        for pair in self.into_inner() {
+            map.entry(pair.as_rule()).or_default().push(pair);
+        }
+        map
+    }
+
+    fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
+    where
+        T: TryFrom<Pair<'a, Rule>>,
+        Col: FromIterator<T>,
+    {
+        self.into_inner().map(T::try_from).collect()
     }
 }
 
@@ -92,9 +134,9 @@ impl TryFrom<Pair<'_, Rule>> for Program {
         let Rule::program = pair.as_rule() else {
             return Err(anyhow!("expected program"));
         };
-        let inner = pair.into_inner().next().unwrap();
-        let body = inner
+        let body = pair
             .into_inner()
+            .filter(|pair| pair.as_rule() != Rule::EOI && pair.as_str() != "\n")
             .map(Stmt::try_from)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Program { body })
@@ -107,7 +149,7 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
         let rule = pair.as_rule();
         match rule {
-            Rule::stmt => pair.into_inner().next().unwrap().try_into(),
+            Rule::stmt_line | Rule::stmt => pair.into_inner().next().unwrap().try_into(),
             Rule::func_def => {
                 let [name, params, body] = pair.into_inner().next_chunk().unwrap();
                 let name = name.as_str().to_string();
@@ -118,6 +160,10 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                 let body = body.try_into()?;
 
                 Ok(Stmt::FunctionDef { name, params, body })
+            }
+            Rule::return_stmt => {
+                let retval = pair.into_inner().next().unwrap().try_into()?;
+                Ok(Stmt::Return { retval })
             }
             Rule::var_def => {
                 let [name, value] = pair.into_inner().next_chunk().unwrap();
@@ -166,6 +212,33 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                     .map(Expr::try_from)
                     .collect::<Result<_, _>>()?;
                 Ok(Expr::Call { path, args })
+            }
+            Rule::if_expr => {
+                let mut by_rule = pair.into_by_rule();
+                let condition = Box::new(
+                    by_rule
+                        .get_mut(&Rule::expr)
+                        .unwrap()
+                        .pop()
+                        .unwrap()
+                        .try_into()?,
+                );
+                let then_body = by_rule
+                    .get_mut(&Rule::then_body)
+                    .unwrap()
+                    .pop()
+                    .unwrap()
+                    .try_map_inner()?;
+                let else_body = match by_rule.get_mut(&Rule::else_body) {
+                    None => None,
+                    Some(pairs) => Some(pairs.pop().unwrap().try_map_inner()?),
+                };
+
+                Ok(Expr::If {
+                    condition,
+                    then_body,
+                    else_body,
+                })
             }
             Rule::literal => {
                 let inner = pair.into_inner().next().unwrap();

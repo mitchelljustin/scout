@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
 
 use anyhow::{anyhow, Error};
@@ -13,7 +13,6 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(String),
-    Error(String),
 }
 
 #[derive(Clone)]
@@ -40,8 +39,8 @@ pub struct Module {
 #[derive(Clone)]
 pub enum ModuleItem {
     Function(Function),
-    Variable(Value),
-    Module(Module),
+    // Variable(Value),
+    // Module(Module),
 }
 
 pub struct Scope {
@@ -52,7 +51,7 @@ pub struct Scope {
 pub struct Environment {
     modules: HashMap<String, Module>,
     current_module_name: String,
-    scope_stack: Vec<Scope>,
+    scope_stack: VecDeque<Scope>,
 }
 
 impl Display for Value {
@@ -62,7 +61,6 @@ impl Display for Value {
             Value::Bool(val) => write!(f, "{val}"),
             Value::Number(val) => write!(f, "{val}"),
             Value::String(val) => write!(f, "{val}"),
-            Value::Error(val) => write!(f, "error({val})"),
         }
     }
 }
@@ -204,7 +202,7 @@ impl Environment {
     }
 
     fn resolve_var(&self, name: &str) -> anyhow::Result<&Value> {
-        for scope in self.scope_stack.iter() {
+        for scope in self.scope_stack.iter().rev() {
             if let Some(value) = scope.variables.get(name) {
                 return Ok(value);
             }
@@ -247,6 +245,7 @@ impl Environment {
 
     pub fn exec_source(&mut self, source: &str) -> anyhow::Result<()> {
         let Program { body } = source.parse()?;
+        dbg!(&body);
         for stmt in body {
             self.exec(stmt)?;
         }
@@ -271,7 +270,7 @@ impl Environment {
             }
             Stmt::VariableDef { name, value } => {
                 let value = self.eval(value)?;
-                let Some(scope) = self.scope_stack.last_mut() else {
+                let Some(scope) = self.scope_stack.back_mut() else {
                     return Err(anyhow!("no scope"));
                 };
                 scope.variables.insert(name, value);
@@ -285,7 +284,7 @@ impl Environment {
     }
 
     fn define_variable(&mut self, name: String, value: Value) -> anyhow::Result<()> {
-        let Some(scope) = self.scope_stack.last_mut() else {
+        let Some(scope) = self.scope_stack.back_mut() else {
             return Err(anyhow!("variable defined outside of a scope"));
         };
         scope.variables.insert(name, value);
@@ -294,19 +293,7 @@ impl Environment {
 
     fn eval(&mut self, expr: Expr) -> anyhow::Result<Value> {
         match expr {
-            Expr::Multiline { body } => {
-                let last_index = body.len() - 1;
-                for (i, stmt) in body.into_iter().enumerate() {
-                    match stmt {
-                        Stmt::Return { retval } => return self.eval(retval),
-                        Stmt::Expr { expr } if i == last_index => return self.eval(expr),
-                        stmt => {
-                            self.exec(stmt)?;
-                        }
-                    }
-                }
-                Ok(Nil)
-            }
+            Expr::Multiline { body } => self.eval_multiline(body, true),
             Expr::Variable { name } => {
                 let value = self.resolve_var(&name)?;
                 Ok(value.clone())
@@ -345,15 +332,30 @@ impl Environment {
                     }
                 }
             }
+            _ => Ok(Nil),
         }
     }
 
+    fn eval_multiline(&mut self, body: Vec<Stmt>, allow_return: bool) -> Result<Value, Error> {
+        let last_index = body.len() - 1;
+        for (i, stmt) in body.into_iter().enumerate() {
+            match stmt {
+                Stmt::Return { retval } if allow_return => return self.eval(retval),
+                Stmt::Expr { expr } if i == last_index => return self.eval(expr),
+                stmt => {
+                    self.exec(stmt)?;
+                }
+            }
+        }
+        Ok(Nil)
+    }
+
     fn pop_scope(&mut self) {
-        self.scope_stack.pop();
+        self.scope_stack.pop_back();
     }
 
     fn push_scope(&mut self, name: String) {
-        self.scope_stack.push(Scope {
+        self.scope_stack.push_back(Scope {
             name,
             variables: Default::default(),
         });

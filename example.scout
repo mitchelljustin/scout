@@ -1,6 +1,6 @@
-x = 3
-yoloswag = std::concat("yolo", "swag")
-mod mitch
-    fn plus(x, y) = std::add(x, y, 100)
+if ""
+    std::print("YO")
+else
+    std::print("NO")
+    ligma()
 end
-std::print(mitch::plus(x, 9), yoloswag)
