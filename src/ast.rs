@@ -91,21 +91,49 @@ fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
     }
 }
 
+struct ByRule<'a, R>(HashMap<R, Vec<Pair<'a, R>>>);
+
+impl<'a, R: Eq + Hash> ByRule<'a, R> {
+    pub fn pop(&mut self, rule: R) -> Option<Pair<'a, R>> {
+        self.0.get_mut(&rule).and_then(Vec::pop)
+    }
+}
+
 trait PairExt<'a, R: Hash + Eq> {
-    fn into_by_rule(self) -> HashMap<R, Vec<Pair<'a, R>>>;
+    fn as_string(&self) -> String;
+    fn inner_as_strings(self) -> Vec<String>;
+    fn into_single_inner(self) -> Option<Pair<'a, R>>;
+    fn into_by_rule(self) -> ByRule<'a, R>;
     fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
     where
         T: TryFrom<Pair<'a, Rule>>,
         Col: FromIterator<T>;
+    fn map_inner<T, Col>(self) -> Col
+    where
+        T: From<Pair<'a, Rule>>,
+        Col: FromIterator<T>;
+    fn extract_rules<const N: usize>(self, rules: [Rule; N]) -> [Option<Pair<'a, Rule>>; N];
 }
 
 impl<'a> PairExt<'a, Rule> for Pair<'a, Rule> {
-    fn into_by_rule(self) -> HashMap<Rule, Vec<Pair<'a, Rule>>> {
+    fn as_string(&self) -> String {
+        self.as_str().to_string()
+    }
+
+    fn inner_as_strings(self) -> Vec<String> {
+        self.into_inner().map(|pair| pair.as_string()).collect()
+    }
+
+    fn into_single_inner(self) -> Option<Pair<'a, Rule>> {
+        self.into_inner().next()
+    }
+
+    fn into_by_rule(self) -> ByRule<'a, Rule> {
         let mut map = HashMap::<_, Vec<_>>::new();
         for pair in self.into_inner() {
             map.entry(pair.as_rule()).or_default().push(pair);
         }
-        map
+        ByRule(map)
     }
 
     fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
@@ -113,7 +141,20 @@ impl<'a> PairExt<'a, Rule> for Pair<'a, Rule> {
         T: TryFrom<Pair<'a, Rule>>,
         Col: FromIterator<T>,
     {
-        self.into_inner().map(T::try_from).collect()
+        self.into_inner().map(TryFrom::try_from).collect()
+    }
+
+    fn map_inner<T, Col>(self) -> Col
+    where
+        T: From<Pair<'a, Rule>>,
+        Col: FromIterator<T>,
+    {
+        self.into_inner().map(From::from).collect()
+    }
+
+    fn extract_rules<const N: usize>(self, rules: [Rule; N]) -> [Option<Pair<'a, Rule>>; N] {
+        let mut by_rule = self.into_by_rule();
+        rules.map(|rule| by_rule.pop(rule))
     }
 }
 
@@ -149,36 +190,34 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
         let rule = pair.as_rule();
         match rule {
-            Rule::stmt_line | Rule::stmt => pair.into_inner().next().unwrap().try_into(),
+            Rule::stmt_line | Rule::stmt => pair.into_single_inner().unwrap().try_into(),
             Rule::func_def => {
-                let [name, params, body] = pair.into_inner().next_chunk().unwrap();
-                let name = name.as_str().to_string();
-                let params = params
-                    .into_inner()
-                    .map(|param| param.as_str().to_string())
-                    .collect();
-                let body = body.try_into()?;
+                let [name, params, body] =
+                    pair.extract_rules([Rule::ident, Rule::param_list, Rule::expr]);
+                let name = name.unwrap().as_string();
+                let params = params.unwrap().inner_as_strings();
+                let body = body.unwrap().try_into()?;
 
                 Ok(Stmt::FunctionDef { name, params, body })
             }
             Rule::return_stmt => {
-                let retval = pair.into_inner().next().unwrap().try_into()?;
+                let retval = pair.into_single_inner().unwrap().try_into()?;
                 Ok(Stmt::Return { retval })
             }
             Rule::var_def => {
-                let [name, value] = pair.into_inner().next_chunk().unwrap();
-                let name = name.as_str().to_string();
-                let value = value.try_into()?;
+                let [name, value] = pair.extract_rules([Rule::ident, Rule::expr]);
+                let name = name.unwrap().as_string();
+                let value = value.unwrap().try_into()?;
                 Ok(Stmt::VariableDef { name, value })
             }
             Rule::mod_def => {
-                let mut inner = pair.into_inner();
-                let name = inner.next().unwrap().as_str().to_string();
-                let body = inner.map(Stmt::try_from).collect::<Result<_, _>>()?;
+                let [name, body] = pair.extract_rules([Rule::ident, Rule::mod_body]);
+                let name = name.unwrap().as_string();
+                let body = body.unwrap().try_map_inner()?;
                 Ok(Stmt::ModuleDef { name, body })
             }
             Rule::expr => {
-                let expr = pair.into_inner().next().unwrap().try_into()?;
+                let expr = pair.into_single_inner().unwrap().try_into()?;
                 Ok(Stmt::Expr { expr })
             }
             _ => Err(anyhow!("expected statement")),
@@ -192,47 +231,23 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
         let rule = pair.as_rule();
         match rule {
-            Rule::expr => pair.into_inner().next().unwrap().try_into(),
+            Rule::expr => pair.into_single_inner().unwrap().try_into(),
             Rule::multiline_expr => {
-                let body = pair
-                    .into_inner()
-                    .map(Stmt::try_from)
-                    .collect::<Result<_, _>>()?;
+                let body = pair.try_map_inner()?;
                 Ok(Expr::Multiline { body })
             }
             Rule::call => {
-                let [path, args] = pair.into_inner().next_chunk().unwrap();
-                let path = Path(
-                    path.into_inner()
-                        .map(|component| component.as_str().to_string())
-                        .collect(),
-                );
-                let args = args
-                    .into_inner()
-                    .map(Expr::try_from)
-                    .collect::<Result<_, _>>()?;
+                let [path, args] = pair.extract_rules([Rule::path, Rule::arg_list]);
+                let path = Path(path.unwrap().inner_as_strings());
+                let args = args.unwrap().try_map_inner()?;
                 Ok(Expr::Call { path, args })
             }
             Rule::if_expr => {
-                let mut by_rule = pair.into_by_rule();
-                let condition = Box::new(
-                    by_rule
-                        .get_mut(&Rule::expr)
-                        .unwrap()
-                        .pop()
-                        .unwrap()
-                        .try_into()?,
-                );
-                let then_body = by_rule
-                    .get_mut(&Rule::then_body)
-                    .unwrap()
-                    .pop()
-                    .unwrap()
-                    .try_map_inner()?;
-                let else_body = match by_rule.get_mut(&Rule::else_body) {
-                    None => None,
-                    Some(pairs) => Some(pairs.pop().unwrap().try_map_inner()?),
-                };
+                let [condition, then_body, else_body] =
+                    pair.extract_rules([Rule::expr, Rule::then_body, Rule::else_body]);
+                let condition = Box::new(condition.unwrap().try_into()?);
+                let then_body = then_body.unwrap().try_map_inner()?;
+                let else_body = else_body.map(PairExt::try_map_inner).transpose()?;
 
                 Ok(Expr::If {
                     condition,
@@ -241,20 +256,18 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                 })
             }
             Rule::literal => {
-                let inner = pair.into_inner().next().unwrap();
-                let value = match inner.as_rule() {
-                    Rule::number => Literal::Number(inner.as_str().parse()?),
-                    Rule::string => {
-                        Literal::String(inner.into_inner().next().unwrap().as_str().to_string())
-                    }
-                    Rule::bool => Literal::Bool(inner.as_str() == "true"),
+                let value = pair.into_single_inner().unwrap();
+                let value = match value.as_rule() {
+                    Rule::number => Literal::Number(value.as_str().parse()?),
+                    Rule::string => Literal::String(value.into_single_inner().unwrap().as_string()),
+                    Rule::bool => Literal::Bool(value.as_str() == "true"),
                     Rule::nil => Literal::Nil,
                     _ => unreachable!(),
                 };
                 Ok(Expr::Literal { value })
             }
             Rule::var_ref => {
-                let name = pair.into_inner().next().unwrap().as_str().to_string();
+                let name = pair.into_single_inner().unwrap().as_string();
                 Ok(Expr::Variable { name })
             }
             _ => Err(anyhow!("expected expression")),

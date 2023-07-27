@@ -23,7 +23,11 @@ stmt = {
 }
 
 mod_def = {
-    "mod" ~ ident ~ NEWLINE ~ (func_def ~ NEWLINE)* ~ "end"
+    "mod" ~ ident ~ NEWLINE ~ mod_body ~ "end"
+}
+
+mod_body = {
+    (func_def ~ NEWLINE)*
 }
 
 expr = {
