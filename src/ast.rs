@@ -12,12 +12,12 @@ use pest_derive::Parser;
 #[grammar = "scout.pest"]
 struct ScoutParser;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Path(pub(crate) Vec<String>);
 
 impl Display for Path {
@@ -26,7 +26,7 @@ impl Display for Path {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Multiline {
         body: Vec<Stmt>,
@@ -46,9 +46,14 @@ pub enum Expr {
         then_body: Vec<Stmt>,
         else_body: Option<Vec<Stmt>>,
     },
+    Binary {
+        lhs: Box<Expr>,
+        op: BinaryOp,
+        rhs: Box<Expr>,
+    },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Nil,
     Bool(bool),
@@ -56,7 +61,7 @@ pub enum Literal {
     String(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     ModuleDef {
         name: String,
@@ -79,6 +84,14 @@ pub enum Stmt {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum BinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
+
 fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
     println!(
         "{}{:?} '{}'",
@@ -97,6 +110,26 @@ impl<'a, R: Eq + Hash> ByRule<'a, R> {
     pub fn pop(&mut self, rule: R) -> Option<Pair<'a, R>> {
         self.0.get_mut(&rule).and_then(Vec::pop)
     }
+}
+
+#[test]
+fn test_programs() {
+    let ast: Program = "".parse().unwrap();
+    assert_eq!(ast, Program { body: Vec::new() });
+    let ast: Program = "std::print(1)\n".parse().unwrap();
+    assert_eq!(
+        ast,
+        Program {
+            body: vec![Stmt::Expr {
+                expr: Expr::Call {
+                    path: Path(["std", "print"].map(ToString::to_string).to_vec()),
+                    args: vec![Expr::Literal {
+                        value: Literal::Number(1.0),
+                    }]
+                }
+            }]
+        }
+    );
 }
 
 trait PairExt<'a, R: Hash + Eq> {
@@ -220,9 +253,30 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                 let expr = pair.into_single_inner().unwrap().try_into()?;
                 Ok(Stmt::Expr { expr })
             }
-            _ => Err(anyhow!("expected statement")),
+            rule => Err(anyhow!("expected statement: {rule:?}")),
         }
     }
+}
+
+#[test]
+fn binary_ops() {
+    let program: Program = "1 + 2\n".parse().unwrap();
+    assert_eq!(
+        program,
+        Program {
+            body: vec![Stmt::Expr {
+                expr: Expr::Binary {
+                    lhs: Box::new(Expr::Literal {
+                        value: Literal::Number(1.0)
+                    }),
+                    op: BinaryOp::Add,
+                    rhs: Box::new(Expr::Literal {
+                        value: Literal::Number(2.0)
+                    })
+                }
+            }]
+        }
+    )
 }
 
 impl TryFrom<Pair<'_, Rule>> for Expr {
@@ -231,10 +285,30 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
         let rule = pair.as_rule();
         match rule {
-            Rule::expr => pair.into_single_inner().unwrap().try_into(),
-            Rule::multiline_expr => {
-                let body = pair.try_map_inner()?;
-                Ok(Expr::Multiline { body })
+            Rule::expr | Rule::expr_atom => pair.into_single_inner().unwrap().try_into(),
+            Rule::multiline_expr => Ok(Expr::Multiline {
+                body: pair.try_map_inner()?,
+            }),
+            Rule::expr_bin => {
+                let [lhs, bin_op, rhs] =
+                    pair.extract_rules([Rule::expr_atom, Rule::bin_op, Rule::expr_bin]);
+                let lhs = lhs.unwrap().try_into()?;
+                if let (Some(bin_op), Some(rhs)) = (bin_op, rhs) {
+                    let op = match bin_op.into_single_inner().unwrap().as_rule() {
+                        Rule::add => BinaryOp::Add,
+                        Rule::subtract => BinaryOp::Subtract,
+                        Rule::multiply => BinaryOp::Multiply,
+                        Rule::divide => BinaryOp::Divide,
+                        rule => unreachable!("{rule:?}"),
+                    };
+                    let rhs = Box::new(rhs.try_into()?);
+                    return Ok(Expr::Binary {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs,
+                    });
+                }
+                Ok(lhs)
             }
             Rule::call => {
                 let [path, args] = pair.extract_rules([Rule::path, Rule::arg_list]);
@@ -270,7 +344,7 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                 let name = pair.into_single_inner().unwrap().as_string();
                 Ok(Expr::Variable { name })
             }
-            _ => Err(anyhow!("expected expression")),
+            rule => Err(anyhow!("expected expression: {rule:?}")),
         }
     }
 }

@@ -32,10 +32,23 @@ mod_body = {
 
 expr = {
     multiline_expr |
+    if_expr |
+    expr_bin
+}
+
+expr_bin = {
+    expr_atom ~ (bin_op ~ expr_bin)?
+}
+
+expr_atom = {
+    grouping |
     call |
     literal |
-    if_expr |
     var_ref
+}
+
+grouping = {
+    "(" ~ expr ~ ")"
 }
 
 var_ref = { ident }
@@ -56,6 +69,12 @@ if_expr = {
     "end"
 }
 
+bin_op = { add | subtract | multiply | divide }
+    add      = { "+" }
+    subtract = { "-" }
+    multiply = { "*" }
+    divide   = { "/" }
+
 then_body = { stmt_line* }
 else_body = { stmt_line* }
 
@@ -73,10 +92,6 @@ call = {
 
 path = {
     ident ~ ("::" ~ ident)*
-}
-
-binary_op = {
-    "+"
 }
 
 param_list = {

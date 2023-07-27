@@ -44,7 +44,7 @@ pub enum ModuleItem {
 }
 
 pub struct Scope {
-    name: String,
+    _name: String,
     variables: HashMap<String, Value>,
 }
 
@@ -309,9 +309,7 @@ impl Environment {
                     .into_iter()
                     .map(|arg| self.eval(arg))
                     .collect::<Result<Vec<_>, _>>()?;
-                let ModuleItem::Function(function) = self.resolve_item(&path)? else {
-                    return Err(anyhow!("not a function: '{path}'"));
-                };
+                let ModuleItem::Function(function) = self.resolve_item(&path)?;
                 match function.clone() {
                     Function::Native(native_function) => native_function(self, args),
                     Function::User(UserFunction { name, params, body }) => {
@@ -356,7 +354,7 @@ impl Environment {
 
     fn push_scope(&mut self, name: String) {
         self.scope_stack.push_back(Scope {
-            name,
+            _name: name,
             variables: Default::default(),
         });
     }
