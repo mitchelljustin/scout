@@ -440,8 +440,9 @@ impl Environment {
             .collect::<Result<Vec<_>, _>>()?;
         let ModuleItem::Function(function) = self.resolve_item(path)?;
         match function.clone() {
-            Function::Native(native_function) => native_function(self, args),
-            Function::User(UserFunction { name, params, body }) => {
+            Function::Native(native_function) => native_function(self, args)
+                .map_err(|err| anyhow!("while evaluating {path}(): {err}")),
+            Function::User(UserFunction { params, body, .. }) => {
                 if args.len() != params.len() {
                     return Err(anyhow!(
                         "arity mismatch, expected {}, got {}",
@@ -449,11 +450,14 @@ impl Environment {
                         args.len()
                     ));
                 }
-                self.push_scope(format!("fn {name}({})", params.len()));
+                let func_id = format!("{path}({})", params.len());
+                self.push_scope(func_id.clone());
                 for (arg, param) in args.into_iter().zip(params) {
                     self.define_variable(param.clone(), arg)?;
                 }
-                let retval = self.eval(body.clone())?;
+                let retval = self
+                    .eval(body.clone())
+                    .map_err(|err| anyhow!("while evaluating {func_id}: {err}"))?;
                 self.pop_scope();
                 Ok(retval)
             }

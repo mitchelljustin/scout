@@ -17,3 +17,4 @@ end
 
 std::print(std::len("YOYOYOY"))
 
+std::add(1, 2, 3)
