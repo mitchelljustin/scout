@@ -28,11 +28,18 @@ stmt = {
     var_def |
     return_stmt |
     for_loop |
+    while_loop |
     expr
 }
 
 for_loop = {
     "for" ~ ident ~ "in" ~ expr ~ NEWLINE ~
+        body ~
+    "end"
+}
+
+while_loop = {
+    "while" ~ expr ~ NEWLINE ~
         body ~
     "end"
 }
@@ -88,11 +95,16 @@ if_expr = {
     "end"
 }
 
-bin_op = { add | subtract | multiply | divide }
-    add      = { "+" }
-    subtract = { "-" }
-    multiply = { "*" }
-    divide   = { "/" }
+bin_op = { add | subtract | multiply | divide | less | greater | less_equal | greater_equal }
+    add           = { "+" }
+    subtract      = { "-" }
+    multiply      = { "*" }
+    divide        = { "/" }
+    less          = { "<" }
+    greater       = { ">" }
+    less_equal    = { "<=" }
+    greater_equal = { ">=" }
+
 
 then_body = { stmt_line* }
 else_body = { stmt_line* }
@@ -132,7 +144,7 @@ array = { "[" ~ expr_list ~ "]" }
 bool = @{ "true" | "false" }
 nil = @{ "nil" }
 
-KEYWORD = @{ "fn" | "do" | "end" | "mod" | "if" | "else" | "for" | "in" }
+KEYWORD = @{ "fn" | "do" | "end" | "mod" | "if" | "else" | "for" | "in" | "while" }
 
 ident = @{
     !(KEYWORD ~ !XID_START) ~

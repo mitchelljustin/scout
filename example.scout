@@ -1,5 +1,17 @@
-x = 3
-for i in [1, 2, 3]
-    x = x + i
-    std::print(i, x)
+mod util
+    fn range(start, ending) = do
+        i = start
+        array = []
+        while i < ending
+            array = array + [i]
+            i = i + 1
+        end
+        array
+    end
 end
+
+for i in util::range(0, 100)
+    i = i * (i + 7)
+    std::print(i)
+end
+

@@ -88,6 +88,10 @@ pub enum Stmt {
         target: Expr,
         body: Vec<Stmt>,
     },
+    WhileLoop {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +100,10 @@ pub enum BinaryOp {
     Subtract,
     Multiply,
     Divide,
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
 }
 
 fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
@@ -227,8 +235,7 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
     type Error = anyhow::Error;
 
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
-        let rule = pair.as_rule();
-        match rule {
+        match pair.as_rule() {
             Rule::stmt_line | Rule::stmt | Rule::top_stmt | Rule::top_stmt_line => {
                 pair.into_single_inner().unwrap().try_into()
             }
@@ -273,6 +280,12 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                 let expr = pair.into_single_inner().unwrap().try_into()?;
                 Ok(Stmt::Expr { expr })
             }
+            Rule::while_loop => {
+                let [condition, body] = pair.extract_rules([Rule::expr, Rule::body]);
+                let condition = condition.unwrap().try_into()?;
+                let body = body.unwrap().try_map_inner()?;
+                Ok(Stmt::WhileLoop { condition, body })
+            }
             rule => Err(anyhow!("expected statement: {rule:?}")),
         }
     }
@@ -303,9 +316,10 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
     type Error = anyhow::Error;
 
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
-        let rule = pair.as_rule();
-        match rule {
-            Rule::expr | Rule::expr_atom => pair.into_single_inner().unwrap().try_into(),
+        match pair.as_rule() {
+            Rule::expr | Rule::expr_atom | Rule::grouping => {
+                pair.into_single_inner().unwrap().try_into()
+            }
             Rule::multiline_expr => Ok(Expr::Multiline {
                 body: pair.try_map_inner()?,
             }),
@@ -319,6 +333,10 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                         Rule::subtract => BinaryOp::Subtract,
                         Rule::multiply => BinaryOp::Multiply,
                         Rule::divide => BinaryOp::Divide,
+                        Rule::less => BinaryOp::Less,
+                        Rule::greater => BinaryOp::Greater,
+                        Rule::less_equal => BinaryOp::LessEqual,
+                        Rule::greater_equal => BinaryOp::GreaterEqual,
                         rule => unreachable!("{rule:?}"),
                     };
                     let rhs = Box::new(rhs.try_into()?);

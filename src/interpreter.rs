@@ -109,6 +109,10 @@ fn binary_op_to_fn_path(op: BinaryOp) -> Path {
         BinaryOp::Subtract => "sub",
         BinaryOp::Multiply => "mul",
         BinaryOp::Divide => "div",
+        BinaryOp::Less => "lt",
+        BinaryOp::Greater => "gt",
+        BinaryOp::LessEqual => "lte",
+        BinaryOp::GreaterEqual => "gte",
     };
     Path(["std", fn_name].map(ToString::to_string).to_vec())
 }
@@ -157,6 +161,23 @@ mod builtin {
             };
             Ok(Value::Number(lhs - rhs))
         }
+        fn mul(_env, args) {
+            expect_arity!([lhs, rhs] = args);
+            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                return Err(anyhow!("expected numbers"));
+            };
+            Ok(Value::Number(lhs * rhs))
+        }
+        fn div(_env, args) {
+            expect_arity!([lhs, rhs] = args);
+            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                return Err(anyhow!("expected numbers"));
+            };
+            if rhs == 0.0 {
+                return Err(anyhow!("cannot divide by zero"));
+            }
+            Ok(Value::Number(lhs / rhs))
+        }
         fn str(_env, args) {
             Ok(
                 Value::String(
@@ -165,6 +186,34 @@ mod builtin {
                         .fold(String::new(), |string, value| string + &value.to_string())
                 )
             )
+        }
+        fn lt(_env, args) {
+            expect_arity!([lhs, rhs] = args);
+            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                return Err(anyhow!("expected numbers"));
+            };
+            Ok(Value::Bool(lhs < rhs))
+        }
+        fn gt(_env, args) {
+            expect_arity!([lhs, rhs] = args);
+            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                return Err(anyhow!("expected numbers"));
+            };
+            Ok(Value::Bool(lhs > rhs))
+        }
+        fn lte(_env, args) {
+            expect_arity!([lhs, rhs] = args);
+            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                return Err(anyhow!("expected numbers"));
+            };
+            Ok(Value::Bool(lhs <= rhs))
+        }
+        fn gte(_env, args) {
+            expect_arity!([lhs, rhs] = args);
+            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                return Err(anyhow!("expected numbers"));
+            };
+            Ok(Value::Bool(lhs >= rhs))
         }
     ];
 }
@@ -325,6 +374,17 @@ impl Environment {
                 }
                 self.pop_scope();
             }
+            Stmt::WhileLoop { condition, body } => loop {
+                loop {
+                    let Value::Bool(condition) = self.eval(condition.clone())? else {
+                        return Err(anyhow!("while expected boolean condition"));
+                    };
+                    if !condition {
+                        return Ok(());
+                    }
+                    self.eval_multiline(body.clone(), false)?;
+                }
+            },
         }
         Ok(())
     }
