@@ -215,6 +215,14 @@ mod builtin {
             };
             Ok(Value::Bool(lhs >= rhs))
         }
+        fn len(_env, args) {
+            expect_arity!([arg] = args);
+            Ok(Value::Number(match arg {
+                Value::String(string) => string.len() as _,
+                Value::Array(array) => array.len() as _,
+                _ => return Err(anyhow!("expected string or array"))
+            }))
+        }
     ];
 }
 

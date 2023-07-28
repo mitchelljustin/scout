@@ -15,3 +15,5 @@ for i in util::range(0, 100)
     std::print(i)
 end
 
+std::print(std::len("YOYOYOY"))
+
