@@ -196,7 +196,7 @@ impl FromStr for Program {
 
     fn from_str(source: &str) -> Result<Self, Self::Err> {
         let pair = ScoutParser::parse(Rule::program, source)?.next().unwrap();
-        pretty_print_pair(pair.clone(), 0);
+        // pretty_print_pair(pair.clone(), 0);
         pair.try_into()
     }
 }

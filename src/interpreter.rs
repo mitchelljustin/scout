@@ -103,8 +103,9 @@ fn binary_op_to_fn_path(op: BinaryOp) -> Path {
 }
 
 mod builtin {
-    use crate::interpreter::{count, native_functions, Value, Value::Nil};
     use anyhow::anyhow;
+
+    use crate::interpreter::{count, native_functions, Value, Value::Nil};
 
     macro expect_arity([$($arg:ident),+] = $args:expr) {
         const ARITY: usize = count!($($arg)+);
@@ -140,6 +141,15 @@ mod builtin {
                 return Err(anyhow!("expected numbers"));
             };
             Ok(Value::Number(lhs - rhs))
+        }
+        fn str(_env, args) {
+            Ok(
+                Value::String(
+                    args
+                        .into_iter()
+                        .fold(String::new(), |string, value| string + &value.to_string())
+                )
+            )
         }
     ];
 }
@@ -252,7 +262,6 @@ impl Environment {
 
     pub fn exec_source(&mut self, source: &str) -> anyhow::Result<()> {
         let Program { body } = source.parse()?;
-        dbg!(&body);
         for stmt in body {
             self.exec(stmt)?;
         }
