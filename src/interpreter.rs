@@ -5,7 +5,7 @@ use anyhow::{anyhow, Error};
 
 use Value::Nil;
 
-use crate::ast::{Expr, Literal, Path, Program, Stmt};
+use crate::ast::{BinaryOp, Expr, Literal, Path, Program, Stmt};
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -92,8 +92,26 @@ macro native_functions(
     ];
 }
 
+fn binary_op_to_fn_path(op: BinaryOp) -> Path {
+    let fn_name = match op {
+        BinaryOp::Add => "add",
+        BinaryOp::Subtract => "sub",
+        BinaryOp::Multiply => "mul",
+        BinaryOp::Divide => "div",
+    };
+    Path(["std", fn_name].map(ToString::to_string).to_vec())
+}
+
 mod builtin {
-    use crate::interpreter::{native_functions, Value, Value::Nil};
+    use crate::interpreter::{count, native_functions, Value, Value::Nil};
+    use anyhow::anyhow;
+
+    macro expect_arity([$($arg:ident),+] = $args:expr) {
+        const ARITY: usize = count!($($arg)+);
+        let Ok([$($arg),+]) = <[_; ARITY]>::try_from($args) else {
+            return Err(anyhow!("expected {} arguments", ARITY));
+        };
+    }
 
     native_functions![
         [NATIVE_FUNCTIONS]
@@ -109,30 +127,19 @@ mod builtin {
             Ok(Nil)
         }
         fn add(_env, args) {
-            if args.is_empty() {
-                return Ok(Nil);
+            expect_arity!([lhs, rhs] = args);
+            match (lhs, rhs) {
+                (Value::Number(lhs), Value::Number(rhs)) => Ok(Value::Number(lhs + rhs)),
+                (Value::String(lhs), Value::String(rhs)) => Ok(Value::String(lhs + &rhs)),
+                _ => Err(anyhow!("expected strings or numbers"))
             }
-            let result = args.into_iter().fold(Value::Number(0.0), |acc, arg| {
-                if let (Value::Number(acc), Value::Number(val)) = (acc, arg) {
-                    Value::Number(acc + val)
-                } else {
-                    Nil
-                }
-            });
-            Ok(result)
         }
-        fn concat(_env, args) {
-            if args.is_empty() {
-                return Ok(Nil);
-            }
-            let result = args.into_iter().fold(Value::String(String::new()), |acc, arg| {
-                if let (Value::String(acc), Value::String(val)) = (acc, arg) {
-                    Value::String(acc + &val)
-                } else {
-                    Nil
-                }
-            });
-            Ok(result)
+        fn sub(_env, args) {
+            expect_arity!([lhs, rhs] = args);
+            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                return Err(anyhow!("expected numbers"));
+            };
+            Ok(Value::Number(lhs - rhs))
         }
     ];
 }
@@ -304,33 +311,39 @@ impl Environment {
                 Literal::Number(value) => Value::Number(value),
                 Literal::String(value) => Value::String(value),
             }),
-            Expr::Call { path, args } => {
-                let args = args
-                    .into_iter()
-                    .map(|arg| self.eval(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let ModuleItem::Function(function) = self.resolve_item(&path)?;
-                match function.clone() {
-                    Function::Native(native_function) => native_function(self, args),
-                    Function::User(UserFunction { name, params, body }) => {
-                        if args.len() != params.len() {
-                            return Err(anyhow!(
-                                "arity mismatch, expected {}, got {}",
-                                params.len(),
-                                args.len()
-                            ));
-                        }
-                        self.push_scope(format!("fn {name}({})", params.len()));
-                        for (arg, param) in args.into_iter().zip(params) {
-                            self.define_variable(param.clone(), arg)?;
-                        }
-                        let retval = self.eval(body.clone())?;
-                        self.pop_scope();
-                        Ok(retval)
-                    }
-                }
+            Expr::Binary { lhs, op, rhs } => {
+                let path = binary_op_to_fn_path(op);
+                self.resolve_and_call(&path, vec![*lhs, *rhs])
             }
+            Expr::Call { path, args } => self.resolve_and_call(&path, args),
             _ => Ok(Nil),
+        }
+    }
+
+    fn resolve_and_call(&mut self, path: &Path, args: Vec<Expr>) -> anyhow::Result<Value> {
+        let args = args
+            .into_iter()
+            .map(|arg| self.eval(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ModuleItem::Function(function) = self.resolve_item(path)?;
+        match function.clone() {
+            Function::Native(native_function) => native_function(self, args),
+            Function::User(UserFunction { name, params, body }) => {
+                if args.len() != params.len() {
+                    return Err(anyhow!(
+                        "arity mismatch, expected {}, got {}",
+                        params.len(),
+                        args.len()
+                    ));
+                }
+                self.push_scope(format!("fn {name}({})", params.len()));
+                for (arg, param) in args.into_iter().zip(params) {
+                    self.define_variable(param.clone(), arg)?;
+                }
+                let retval = self.eval(body.clone())?;
+                self.pop_scope();
+                Ok(retval)
+            }
         }
     }
 
