@@ -98,13 +98,17 @@ param_list = {
     (ident ~ ("," ~ ident)*) | ""
 }
 
-arg_list = {
+arg_list = { expr_list }
+
+expr_list = {
     (expr ~ ("," ~ expr)*) | ""
 }
 
 literal = {
-    number | string | bool | nil
+    number | string | bool | array | nil
 }
+
+array = { "[" ~ expr_list ~ "]" }
 
 bool = @{ "true" | "false" }
 nil = @{ "nil" }

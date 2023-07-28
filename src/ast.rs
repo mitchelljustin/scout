@@ -59,6 +59,7 @@ pub enum Literal {
     Bool(bool),
     Number(f64),
     String(String),
+    Array(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -313,7 +314,7 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
             Rule::call => {
                 let [path, args] = pair.extract_rules([Rule::path, Rule::arg_list]);
                 let path = Path(path.unwrap().inner_as_strings());
-                let args = args.unwrap().try_map_inner()?;
+                let args = args.unwrap().into_single_inner().unwrap().try_map_inner()?;
                 Ok(Expr::Call { path, args })
             }
             Rule::if_expr => {
@@ -336,6 +337,9 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                     Rule::string => Literal::String(value.into_single_inner().unwrap().as_string()),
                     Rule::bool => Literal::Bool(value.as_str() == "true"),
                     Rule::nil => Literal::Nil,
+                    Rule::array => {
+                        Literal::Array(value.into_single_inner().unwrap().try_map_inner()?)
+                    }
                     _ => unreachable!(),
                 };
                 Ok(Expr::Literal { value })

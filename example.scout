@@ -1,13 +1,6 @@
-
-mod mitch
-    fn append_mitch(str) = do
-        mitch = " mitch"
-        std::str(str, mitch)
-    end
-end
 fn main() = do
-    z = 1 + 3 + 4 - 7
-    x = std::str(z, true, "string")
-    std::print(mitch::append_mitch(x))
+    arr = [1, 2]
+    arr = arr + [3]
+    std::print(arr)
 end
 main()

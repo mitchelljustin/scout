@@ -13,6 +13,7 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(String),
+    Array(Vec<Value>),
 }
 
 #[derive(Clone)]
@@ -61,6 +62,16 @@ impl Display for Value {
             Value::Bool(val) => write!(f, "{val}"),
             Value::Number(val) => write!(f, "{val}"),
             Value::String(val) => write!(f, "{val}"),
+            Value::Array(vals) => {
+                write!(f, "[")?;
+                for (i, val) in vals.iter().enumerate() {
+                    write!(f, "{val}")?;
+                    if i < vals.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "]")
+            }
         }
     }
 }
@@ -132,7 +143,11 @@ mod builtin {
             match (lhs, rhs) {
                 (Value::Number(lhs), Value::Number(rhs)) => Ok(Value::Number(lhs + rhs)),
                 (Value::String(lhs), Value::String(rhs)) => Ok(Value::String(lhs + &rhs)),
-                _ => Err(anyhow!("expected strings or numbers"))
+                (Value::Array(mut lhs), Value::Array(rhs)) => {
+                    lhs.extend(rhs);
+                    Ok(Value::Array(lhs))
+                }
+                _ => Err(anyhow!("expected strings, numbers or arrays"))
             }
         }
         fn sub(_env, args) {
@@ -319,6 +334,12 @@ impl Environment {
                 Literal::Bool(value) => Value::Bool(value),
                 Literal::Number(value) => Value::Number(value),
                 Literal::String(value) => Value::String(value),
+                Literal::Array(exprs) => Value::Array(
+                    exprs
+                        .into_iter()
+                        .map(|expr| self.eval(expr))
+                        .collect::<Result<_, _>>()?,
+                ),
             }),
             Expr::Binary { lhs, op, rhs } => {
                 let path = binary_op_to_fn_path(op);
