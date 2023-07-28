@@ -6,8 +6,18 @@
 
 program = {
     SOI ~
-    stmt_line* ~
+    top_stmt_line* ~
     EOI
+}
+
+top_stmt = {
+    func_def |
+    mod_def |
+    stmt
+}
+
+top_stmt_line = {
+    NEWLINE | (top_stmt ~ NEWLINE)
 }
 
 stmt_line = {
@@ -15,11 +25,20 @@ stmt_line = {
 }
 
 stmt = {
-    func_def |
     var_def |
-    mod_def |
     return_stmt |
+    for_loop |
     expr
+}
+
+for_loop = {
+    "for" ~ ident ~ "in" ~ expr ~ NEWLINE ~
+        body ~
+    "end"
+}
+
+body = {
+    stmt_line*
 }
 
 mod_def = {
@@ -113,7 +132,7 @@ array = { "[" ~ expr_list ~ "]" }
 bool = @{ "true" | "false" }
 nil = @{ "nil" }
 
-KEYWORD = @{ "fn" | "do" | "end" | "mod" | "if" | "else" }
+KEYWORD = @{ "fn" | "do" | "end" | "mod" | "if" | "else" | "for" | "in" }
 
 ident = @{
     !(KEYWORD ~ !XID_START) ~

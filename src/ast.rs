@@ -83,6 +83,11 @@ pub enum Stmt {
     Expr {
         expr: Expr,
     },
+    ForLoop {
+        iterator: String,
+        target: Expr,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -224,7 +229,9 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
         let rule = pair.as_rule();
         match rule {
-            Rule::stmt_line | Rule::stmt => pair.into_single_inner().unwrap().try_into(),
+            Rule::stmt_line | Rule::stmt | Rule::top_stmt | Rule::top_stmt_line => {
+                pair.into_single_inner().unwrap().try_into()
+            }
             Rule::func_def => {
                 let [name, params, body] =
                     pair.extract_rules([Rule::ident, Rule::param_list, Rule::expr]);
@@ -233,6 +240,18 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                 let body = body.unwrap().try_into()?;
 
                 Ok(Stmt::FunctionDef { name, params, body })
+            }
+            Rule::for_loop => {
+                let [iterator, target, body] =
+                    pair.extract_rules([Rule::ident, Rule::expr, Rule::body]);
+                let iterator = iterator.unwrap().as_string();
+                let target = target.unwrap().try_into()?;
+                let body = body.unwrap().try_map_inner()?;
+                Ok(Stmt::ForLoop {
+                    iterator,
+                    target,
+                    body,
+                })
             }
             Rule::return_stmt => {
                 let retval = pair.into_single_inner().unwrap().try_into()?;

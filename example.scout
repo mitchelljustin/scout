@@ -1,6 +1,5 @@
-fn main() = do
-    arr = [1, 2]
-    arr = arr + [3]
-    std::print(arr)
+x = 3
+for i in [1, 2, 3]
+    x = x + i
+    std::print(i, x)
 end
-main()

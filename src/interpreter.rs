@@ -310,6 +310,21 @@ impl Environment {
             Stmt::Expr { expr } => {
                 self.eval(expr)?;
             }
+            Stmt::ForLoop {
+                iterator,
+                target,
+                body,
+            } => {
+                let Value::Array(target) = self.eval(target)? else {
+                    return Err(anyhow!("for-in expected target to be an array"));
+                };
+                self.push_scope("for-in".to_string());
+                for item in target {
+                    self.define_variable(iterator.clone(), item)?;
+                    self.eval_multiline(body.clone(), false)?;
+                }
+                self.pop_scope();
+            }
         }
         Ok(())
     }
