@@ -6,14 +6,13 @@
 
 program = {
     SOI ~
-    top_stmt_line* ~
+    (top_stmt_line | stmt_line)* ~
     EOI
 }
 
 top_stmt = {
     func_def |
-    mod_def |
-    stmt
+    mod_def
 }
 
 top_stmt_line = {
@@ -49,11 +48,12 @@ body = {
 }
 
 mod_def = {
-    "mod" ~ ident ~ NEWLINE ~ mod_body ~ "end"
+    "mod" ~ ident ~ NEWLINE ~ top_body ~ "end"
 }
 
-mod_body = {
-    (func_def ~ NEWLINE)*
+
+top_body = {
+    top_stmt_line*
 }
 
 expr = {

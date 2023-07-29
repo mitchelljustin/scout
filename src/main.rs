@@ -1,6 +1,7 @@
 #![feature(iter_next_chunk)]
 #![feature(decl_macro)]
 #![feature(map_try_insert)]
+#![feature(anonymous_lifetime_in_impl_trait)]
 
 extern crate core;
 

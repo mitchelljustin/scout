@@ -40,18 +40,19 @@ pub struct Module {
 #[derive(Clone)]
 pub enum ModuleItem {
     Function(Function),
+    Module(Module),
     // Variable(Value),
-    // Module(Module),
 }
 
+#[derive(Debug, Default)]
 pub struct Scope {
     _name: String,
     variables: HashMap<String, Value>,
 }
 
 pub struct Environment {
-    modules: HashMap<String, Module>,
-    current_module_name: String,
+    current_module_path: Path,
+    root_module: Module,
     scope_stack: VecDeque<Scope>,
 }
 
@@ -226,7 +227,7 @@ mod builtin {
     ];
 }
 
-const MODULE_MAIN: &str = "main";
+const MODULE_MAIN: &str = "global";
 const MODULE_STD: &str = "std";
 
 impl Module {
@@ -264,22 +265,26 @@ impl Module {
 
 impl Environment {
     fn resolve_item(&self, path: &Path) -> anyhow::Result<&ModuleItem> {
-        match &path.0.as_slice() {
-            [item_name] => self.get_item_from_module(item_name, self.current_module()),
-            [module_name, item_name] => {
-                let Some(module) = self.modules.get(module_name) else {
-                    return Err(anyhow!("no such module: '{module_name}'"));
+        let (module, item_name) = match &path.0.as_slice() {
+            [item_name] => (self.current_module(), item_name),
+            [module_path @ .., item_name] => {
+                let Some(module) = self.find_module(module_path.iter()) else {
+                    return Err(anyhow!(
+                        "no such module: '{}'",
+                        module_path.to_vec().join("::")
+                    ));
                 };
-                self.get_item_from_module(item_name, module)
+                (module, item_name)
             }
-            _ => Err(anyhow!("can only support `item` or `mod::item`")),
-        }
+            _ => return Err(anyhow!("can only support `item` or `mod::item`")),
+        };
+        self.get_item_from_module(module, item_name)
     }
 
     fn get_item_from_module<'a>(
         &self,
-        item_name: &str,
         module: &'a Module,
+        item_name: &str,
     ) -> anyhow::Result<&'a ModuleItem> {
         let Some(item) = module.items.get(item_name) else {
             return Err(anyhow!(
@@ -300,34 +305,65 @@ impl Environment {
     }
 
     fn current_module(&self) -> &Module {
-        self.modules.get(&self.current_module_name).unwrap()
+        self.find_module(self.current_module_path.0.iter()).unwrap()
+    }
+
+    fn find_module(&self, path: impl Iterator<Item = &String>) -> Option<&Module> {
+        let mut module = &self.root_module;
+        for step in path {
+            let Some(ModuleItem::Module(sub_module)) = module.items.get(step) else {
+                return None;
+            };
+            module = sub_module;
+        }
+        Some(module)
     }
 
     fn current_module_mut(&mut self) -> &mut Module {
-        self.modules.get_mut(&self.current_module_name).unwrap()
+        let mut module = &mut self.root_module;
+        for step in &self.current_module_path.0 {
+            let Some(ModuleItem::Module(sub_module)) = module.items.get_mut(step) else {
+                panic!("current module not found");
+            };
+            module = sub_module;
+        }
+        module
     }
 
-    fn define_module(&mut self, name: String) -> anyhow::Result<&mut Module> {
-        let error = anyhow!("module '{name}' already defined");
-        self.modules
-            .try_insert(name, Module::default())
-            .map_err(|_| error)
+    fn define_module(&mut self, module_name: String) -> anyhow::Result<()> {
+        let current_module = self.current_module_mut();
+        let current_module_name = current_module.name.clone();
+        current_module
+            .items
+            .try_insert(module_name.clone(), ModuleItem::Module(Module::default()))
+            .map_err(|_| {
+                anyhow!(
+                    "module '{module_name}' already defined in '{}'",
+                    current_module_name
+                )
+            })?;
+        self.current_module_path.0.push(module_name.clone());
+        Ok(())
+    }
+
+    fn end_module(&mut self) {
+        self.current_module_path.0.pop();
     }
 
     pub fn new() -> Environment {
         let mut env = Environment {
-            modules: Default::default(),
-            current_module_name: MODULE_MAIN.to_string(),
+            root_module: Default::default(),
             scope_stack: Default::default(),
+            current_module_path: Default::default(),
         };
-        env.push_scope("GLOBAL".to_string());
-        env.define_module(MODULE_MAIN.to_string()).unwrap();
-        let module_std = env.define_module(MODULE_STD.to_string()).unwrap();
+        env.push_scope("global".to_string());
+        env.define_module(MODULE_STD.to_string()).unwrap();
         for (name, function) in builtin::NATIVE_FUNCTIONS {
-            module_std
+            env.current_module_mut()
                 .define_native(name.to_string(), function)
                 .unwrap();
         }
+        env.end_module();
 
         env
     }
@@ -343,14 +379,11 @@ impl Environment {
     fn exec(&mut self, stmt: Stmt) -> anyhow::Result<()> {
         match stmt {
             Stmt::ModuleDef { name, body } => {
-                if self.current_module_name != MODULE_MAIN {
-                    return Err(anyhow!("can only define module at top level"));
-                }
                 self.define_module(name.clone())?;
-                self.current_module_name = name;
                 for stmt in body {
                     self.exec(stmt)?;
                 }
+                self.end_module();
             }
             Stmt::FunctionDef { body, name, params } => {
                 self.current_module_mut()
@@ -438,7 +471,9 @@ impl Environment {
             .into_iter()
             .map(|arg| self.eval(arg))
             .collect::<Result<Vec<_>, _>>()?;
-        let ModuleItem::Function(function) = self.resolve_item(path)?;
+        let ModuleItem::Function(function) = self.resolve_item(path)? else {
+            return Err(anyhow!("not a function: {path}"));
+        };
         match function.clone() {
             Function::Native(native_function) => native_function(self, args)
                 .map_err(|err| anyhow!("while evaluating {path}(): {err}")),
@@ -453,7 +488,7 @@ impl Environment {
                 let func_id = format!("{path}({})", params.len());
                 self.push_scope(func_id.clone());
                 for (arg, param) in args.into_iter().zip(params) {
-                    self.define_variable(param.clone(), arg)?;
+                    self.define_variable(param, arg)?;
                 }
                 let retval = self
                     .eval(body.clone())

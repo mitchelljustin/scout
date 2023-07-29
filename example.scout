@@ -1,20 +1,7 @@
-mod util
-    fn range(start, ending) = do
-        i = start
-        array = []
-        while i < ending
-            array = array + [i]
-            i = i + 1
-        end
-        array
+mod a
+    mod b
+        fn f() = std::print("hi")
     end
 end
 
-for i in util::range(0, 100)
-    i = i * (i + 7)
-    std::print(i)
-end
-
-std::print(std::len("YOYOYOY"))
-
-std::add(1, 2, 3)
+a::b::f()

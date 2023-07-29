@@ -17,7 +17,7 @@ pub struct Program {
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Path(pub(crate) Vec<String>);
 
 impl Display for Path {
@@ -271,7 +271,7 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                 Ok(Stmt::VariableDef { name, value })
             }
             Rule::mod_def => {
-                let [name, body] = pair.extract_rules([Rule::ident, Rule::mod_body]);
+                let [name, body] = pair.extract_rules([Rule::ident, Rule::top_body]);
                 let name = name.unwrap().as_string();
                 let body = body.unwrap().try_map_inner()?;
                 Ok(Stmt::ModuleDef { name, body })
