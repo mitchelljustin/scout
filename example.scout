@@ -1,7 +1,0 @@
-mod a
-    mod b
-        fn f() = std::print("hi")
-    end
-end
-
-a::b::f()

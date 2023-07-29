@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::str::FromStr;
 
 use anyhow::anyhow;
 use pest::iterators::Pair;
-use pest::Parser;
+use pest::{Parser, RuleType};
 use pest_derive::Parser;
 
 #[derive(Parser)]
@@ -146,23 +146,29 @@ fn test_programs() {
     );
 }
 
-trait PairExt<'a, R: Hash + Eq> {
+trait PairExt<'a, R>
+where
+    R: RuleType,
+{
     fn as_string(&self) -> String;
     fn inner_as_strings(self) -> Vec<String>;
     fn into_single_inner(self) -> Option<Pair<'a, R>>;
     fn into_by_rule(self) -> ByRule<'a, R>;
     fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
     where
-        T: TryFrom<Pair<'a, Rule>>,
+        T: TryFrom<Pair<'a, R>>,
         Col: FromIterator<T>;
     fn map_inner<T, Col>(self) -> Col
     where
-        T: From<Pair<'a, Rule>>,
+        T: From<Pair<'a, R>>,
         Col: FromIterator<T>;
-    fn extract_rules<const N: usize>(self, rules: [Rule; N]) -> [Option<Pair<'a, Rule>>; N];
+    fn extract_rules<const N: usize>(self, rules: [R; N]) -> [Option<Pair<'a, R>>; N];
 }
 
-impl<'a> PairExt<'a, Rule> for Pair<'a, Rule> {
+impl<'a, R> PairExt<'a, R> for Pair<'a, R>
+where
+    R: RuleType,
+{
     fn as_string(&self) -> String {
         self.as_str().to_string()
     }
@@ -171,11 +177,11 @@ impl<'a> PairExt<'a, Rule> for Pair<'a, Rule> {
         self.into_inner().map(|pair| pair.as_string()).collect()
     }
 
-    fn into_single_inner(self) -> Option<Pair<'a, Rule>> {
+    fn into_single_inner(self) -> Option<Pair<'a, R>> {
         self.into_inner().next()
     }
 
-    fn into_by_rule(self) -> ByRule<'a, Rule> {
+    fn into_by_rule(self) -> ByRule<'a, R> {
         let mut map = HashMap::<_, Vec<_>>::new();
         for pair in self.into_inner() {
             map.entry(pair.as_rule()).or_default().push(pair);
@@ -185,7 +191,7 @@ impl<'a> PairExt<'a, Rule> for Pair<'a, Rule> {
 
     fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
     where
-        T: TryFrom<Pair<'a, Rule>>,
+        T: TryFrom<Pair<'a, R>>,
         Col: FromIterator<T>,
     {
         self.into_inner().map(TryFrom::try_from).collect()
@@ -193,13 +199,13 @@ impl<'a> PairExt<'a, Rule> for Pair<'a, Rule> {
 
     fn map_inner<T, Col>(self) -> Col
     where
-        T: From<Pair<'a, Rule>>,
+        T: From<Pair<'a, R>>,
         Col: FromIterator<T>,
     {
         self.into_inner().map(From::from).collect()
     }
 
-    fn extract_rules<const N: usize>(self, rules: [Rule; N]) -> [Option<Pair<'a, Rule>>; N] {
+    fn extract_rules<const N: usize>(self, rules: [R; N]) -> [Option<Pair<'a, R>>; N] {
         let mut by_rule = self.into_by_rule();
         rules.map(|rule| by_rule.pop(rule))
     }

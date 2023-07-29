@@ -1,0 +1,11 @@
+module util
+    fn range(start, ending) = do
+        array = []
+        i = start
+        while i < ending
+            array = array + [i]
+            i = i + 1
+        end
+        array
+    end
+end

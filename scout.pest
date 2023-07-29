@@ -48,7 +48,7 @@ body = {
 }
 
 mod_def = {
-    "mod" ~ ident ~ NEWLINE ~ top_body ~ "end"
+    "module" ~ ident ~ NEWLINE ~ top_body ~ "end"
 }
 
 
@@ -144,7 +144,7 @@ array = { "[" ~ expr_list ~ "]" }
 bool = @{ "true" | "false" }
 nil = @{ "nil" }
 
-KEYWORD = @{ "fn" | "do" | "end" | "mod" | "if" | "else" | "for" | "in" | "while" }
+KEYWORD = @{ "fn" | "do" | "end" | "module" | "if" | "else" | "for" | "in" | "while" }
 
 ident = @{
     !(KEYWORD ~ !XID_START) ~

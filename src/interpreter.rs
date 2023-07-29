@@ -227,7 +227,7 @@ mod builtin {
     ];
 }
 
-const MODULE_MAIN: &str = "global";
+const MODULE_ROOT: &str = "_main";
 const MODULE_STD: &str = "std";
 
 impl Module {
@@ -352,7 +352,10 @@ impl Environment {
 
     pub fn new() -> Environment {
         let mut env = Environment {
-            root_module: Default::default(),
+            root_module: Module {
+                items: Default::default(),
+                name: MODULE_ROOT.to_string(),
+            },
             scope_stack: Default::default(),
             current_module_path: Default::default(),
         };
@@ -368,12 +371,9 @@ impl Environment {
         env
     }
 
-    pub fn exec_source(&mut self, source: &str) -> anyhow::Result<()> {
+    pub fn eval_source(&mut self, source: &str) -> anyhow::Result<Value> {
         let Program { body } = source.parse()?;
-        for stmt in body {
-            self.exec(stmt)?;
-        }
-        Ok(())
+        self.eval_multiline(body, false)
     }
 
     fn exec(&mut self, stmt: Stmt) -> anyhow::Result<()> {
