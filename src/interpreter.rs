@@ -7,7 +7,7 @@ use Value::Nil;
 
 use crate::ast::{BinaryOp, Expr, Literal, Path, Program, Stmt};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Nil,
     Bool(bool),
@@ -44,10 +44,20 @@ pub enum ModuleItem {
     // Variable(Value),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Scope {
-    _name: String,
+    context: ScopeContext,
     variables: HashMap<String, Value>,
+}
+
+#[derive(Debug)]
+pub enum ScopeContext {
+    Root,
+    Function { path: Path, arity: usize },
+    WhileLoop,
+    ForLoop,
+    IfBody,
+    ElseBody,
 }
 
 pub struct Environment {
@@ -114,11 +124,15 @@ fn binary_op_to_fn_path(op: BinaryOp) -> Path {
         BinaryOp::Greater => "gt",
         BinaryOp::LessEqual => "lte",
         BinaryOp::GreaterEqual => "gte",
+        BinaryOp::Equal => "eq",
+        BinaryOp::NotEqual => "ne",
     };
-    Path(["std", fn_name].map(ToString::to_string).to_vec())
+    Path(["std", "ops", fn_name].map(ToString::to_string).to_vec())
 }
 
-mod builtin {
+mod scout_std {
+    use std::io::{stdin, stdout, BufRead, Write};
+
     use anyhow::anyhow;
 
     use crate::interpreter::{count, native_functions, Value, Value::Nil};
@@ -140,44 +154,21 @@ mod builtin {
                     print!(" ");
                 }
             }
+            stdout().lock().flush()?;
+            Ok(Nil)
+        }
+        fn println(_env, args) {
+            print(_env, args)?;
             println!();
             Ok(Nil)
         }
-        fn add(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            match (lhs, rhs) {
-                (Value::Number(lhs), Value::Number(rhs)) => Ok(Value::Number(lhs + rhs)),
-                (Value::String(lhs), Value::String(rhs)) => Ok(Value::String(lhs + &rhs)),
-                (Value::Array(mut lhs), Value::Array(rhs)) => {
-                    lhs.extend(rhs);
-                    Ok(Value::Array(lhs))
-                }
-                _ => Err(anyhow!("expected strings, numbers or arrays"))
+        fn readline(_env, args) {
+            if !args.is_empty() {
+                return Err(anyhow!("expected no arguments"));
             }
-        }
-        fn sub(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                return Err(anyhow!("expected numbers"));
-            };
-            Ok(Value::Number(lhs - rhs))
-        }
-        fn mul(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                return Err(anyhow!("expected numbers"));
-            };
-            Ok(Value::Number(lhs * rhs))
-        }
-        fn div(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                return Err(anyhow!("expected numbers"));
-            };
-            if rhs == 0.0 {
-                return Err(anyhow!("cannot divide by zero"));
-            }
-            Ok(Value::Number(lhs / rhs))
+            let mut out = String::new();
+            stdin().lock().read_line(&mut out)?;
+            Ok(Value::String(out))
         }
         fn str(_env, args) {
             Ok(
@@ -188,33 +179,15 @@ mod builtin {
                 )
             )
         }
-        fn lt(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                return Err(anyhow!("expected numbers"));
+        fn num(_env, args) {
+            expect_arity!([value] = args);
+            let Value::String(string) = value else {
+                return Err(anyhow!("expected string"));
             };
-            Ok(Value::Bool(lhs < rhs))
-        }
-        fn gt(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                return Err(anyhow!("expected numbers"));
+            let Ok(value) = string.trim().parse() else {
+                return Ok(Nil);
             };
-            Ok(Value::Bool(lhs > rhs))
-        }
-        fn lte(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                return Err(anyhow!("expected numbers"));
-            };
-            Ok(Value::Bool(lhs <= rhs))
-        }
-        fn gte(_env, args) {
-            expect_arity!([lhs, rhs] = args);
-            let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                return Err(anyhow!("expected numbers"));
-            };
-            Ok(Value::Bool(lhs >= rhs))
+            Ok(Value::Number(value))
         }
         fn len(_env, args) {
             expect_arity!([arg] = args);
@@ -225,10 +198,93 @@ mod builtin {
             }))
         }
     ];
+
+    pub mod ops {
+        use anyhow::anyhow;
+
+        use crate::interpreter::{native_functions, scout_std::expect_arity, Value};
+
+        native_functions!(
+            [NATIVE_FUNCTIONS]
+            fn add(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                match (lhs, rhs) {
+                    (Value::Number(lhs), Value::Number(rhs)) => Ok(Value::Number(lhs + rhs)),
+                    (Value::String(lhs), Value::String(rhs)) => Ok(Value::String(lhs + &rhs)),
+                    (Value::Array(mut lhs), Value::Array(rhs)) => {
+                        lhs.extend(rhs);
+                        Ok(Value::Array(lhs))
+                    }
+                    _ => Err(anyhow!("expected strings, numbers or arrays"))
+                }
+            }
+            fn sub(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                    return Err(anyhow!("expected numbers"));
+                };
+                Ok(Value::Number(lhs - rhs))
+            }
+            fn mul(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                    return Err(anyhow!("expected numbers"));
+                };
+                Ok(Value::Number(lhs * rhs))
+            }
+            fn div(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                    return Err(anyhow!("expected numbers"));
+                };
+                if rhs == 0.0 {
+                    return Err(anyhow!("cannot divide by zero"));
+                }
+                Ok(Value::Number(lhs / rhs))
+            }
+            fn lt(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                    return Err(anyhow!("expected numbers"));
+                };
+                Ok(Value::Bool(lhs < rhs))
+            }
+            fn gt(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                    return Err(anyhow!("expected numbers"));
+                };
+                Ok(Value::Bool(lhs > rhs))
+            }
+            fn lte(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                    return Err(anyhow!("expected numbers"));
+                };
+                Ok(Value::Bool(lhs <= rhs))
+            }
+            fn gte(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
+                    return Err(anyhow!("expected numbers"));
+                };
+                Ok(Value::Bool(lhs >= rhs))
+            }
+            fn eq(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                Ok(Value::Bool(lhs == rhs))
+            }
+            fn ne(_env, args) {
+                expect_arity!([lhs, rhs] = args);
+                Ok(Value::Bool(lhs != rhs))
+            }
+        );
+    }
 }
 
 const MODULE_ROOT: &str = "_main";
 const MODULE_STD: &str = "std";
+const MODULE_OPS: &str = "ops";
 
 impl Module {
     fn define_item(
@@ -359,16 +415,28 @@ impl Environment {
             scope_stack: Default::default(),
             current_module_path: Default::default(),
         };
-        env.push_scope("global".to_string());
-        env.define_module(MODULE_STD.to_string()).unwrap();
-        for (name, function) in builtin::NATIVE_FUNCTIONS {
-            env.current_module_mut()
+        env.push_scope(ScopeContext::Root);
+        env.init_stdlib();
+        env
+    }
+
+    fn init_stdlib(&mut self) {
+        self.define_module(MODULE_STD.to_string()).unwrap();
+        self.define_native_functions(scout_std::NATIVE_FUNCTIONS);
+
+        self.define_module(MODULE_OPS.to_string()).unwrap();
+        self.define_native_functions(scout_std::ops::NATIVE_FUNCTIONS);
+        self.end_module();
+
+        self.end_module();
+    }
+
+    fn define_native_functions<const N: usize>(&mut self, functions: [(&str, NativeFunction); N]) {
+        for (name, function) in functions {
+            self.current_module_mut()
                 .define_native(name.to_string(), function)
                 .unwrap();
         }
-        env.end_module();
-
-        env
     }
 
     pub fn eval_source(&mut self, source: &str) -> anyhow::Result<Value> {
@@ -408,12 +476,12 @@ impl Environment {
                 let Value::Array(target) = self.eval(target)? else {
                     return Err(anyhow!("for-in expected target to be an array"));
                 };
-                self.push_scope("for-in".to_string());
                 for item in target {
+                    self.push_scope(ScopeContext::ForLoop);
                     self.define_variable(iterator.clone(), item)?;
                     self.eval_multiline(body.clone(), false)?;
+                    self.pop_scope();
                 }
-                self.pop_scope();
             }
             Stmt::WhileLoop { condition, body } => loop {
                 loop {
@@ -426,6 +494,25 @@ impl Environment {
                     self.eval_multiline(body.clone(), false)?;
                 }
             },
+            Stmt::Break => {
+                unimplemented!();
+                let Some((index, _)) =
+                    self.scope_stack
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, scope)| {
+                            matches!(
+                                scope.context,
+                                ScopeContext::ForLoop | ScopeContext::WhileLoop
+                            )
+                        })
+                else {
+                    return Err(anyhow!("'break' outside of for loop or while loop"));
+                };
+                self.scope_stack.truncate(index);
+            }
+            Stmt::Continue => unimplemented!(),
         }
         Ok(())
     }
@@ -445,6 +532,28 @@ impl Environment {
                 let value = self.resolve_var(&name)?;
                 Ok(value.clone())
             }
+            Expr::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                let Value::Bool(condition) = self.eval(*condition)? else {
+                    return Err(anyhow!("if condition expected to be a bool"));
+                };
+                if condition {
+                    self.push_scope(ScopeContext::IfBody);
+                    let result = self.eval_multiline(then_body, false)?;
+                    self.pop_scope();
+                    return Ok(result);
+                }
+                if !condition && let Some(else_body) = else_body {
+                    self.push_scope(ScopeContext::ElseBody);
+                    let result = self.eval_multiline(else_body, false)?;
+                    self.pop_scope();
+                    return Ok(result);
+                }
+                Ok(Nil)
+            }
             Expr::Literal { value } => Ok(match value {
                 Literal::Nil => Nil,
                 Literal::Bool(value) => Value::Bool(value),
@@ -462,7 +571,6 @@ impl Environment {
                 self.resolve_and_call(&path, vec![*lhs, *rhs])
             }
             Expr::Call { path, args } => self.resolve_and_call(&path, args),
-            _ => Ok(Nil),
         }
     }
 
@@ -486,7 +594,10 @@ impl Environment {
                     ));
                 }
                 let func_id = format!("{path}({})", params.len());
-                self.push_scope(func_id.clone());
+                self.push_scope(ScopeContext::Function {
+                    path: path.clone(),
+                    arity: params.len(),
+                });
                 for (arg, param) in args.into_iter().zip(params) {
                     self.define_variable(param, arg)?;
                 }
@@ -499,11 +610,11 @@ impl Environment {
         }
     }
 
-    fn eval_multiline(&mut self, body: Vec<Stmt>, allow_return: bool) -> Result<Value, Error> {
+    fn eval_multiline(&mut self, body: Vec<Stmt>, is_function: bool) -> Result<Value, Error> {
         let last_index = body.len() - 1;
         for (i, stmt) in body.into_iter().enumerate() {
             match stmt {
-                Stmt::Return { retval } if allow_return => return self.eval(retval),
+                Stmt::Return { retval } if is_function => return self.eval(retval),
                 Stmt::Expr { expr } if i == last_index => return self.eval(expr),
                 stmt => {
                     self.exec(stmt)?;
@@ -517,9 +628,9 @@ impl Environment {
         self.scope_stack.pop_back();
     }
 
-    fn push_scope(&mut self, name: String) {
+    fn push_scope(&mut self, context: ScopeContext) {
         self.scope_stack.push_back(Scope {
-            _name: name,
+            context,
             variables: Default::default(),
         });
     }

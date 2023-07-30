@@ -9,3 +9,13 @@ module util
         array
     end
 end
+
+loop
+    std::print("enter> ")
+    input = std::readline()
+    if input == "exit"
+        break
+    end
+    result = std::num(input)
+    std::println(result + result)
+end

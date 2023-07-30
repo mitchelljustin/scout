@@ -2,6 +2,7 @@
 #![feature(decl_macro)]
 #![feature(map_try_insert)]
 #![feature(anonymous_lifetime_in_impl_trait)]
+#![feature(let_chains)]
 
 extern crate core;
 

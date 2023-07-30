@@ -80,6 +80,8 @@ pub enum Stmt {
     Return {
         retval: Expr,
     },
+    Break,
+    Continue,
     Expr {
         expr: Expr,
     },
@@ -104,6 +106,8 @@ pub enum BinaryOp {
     Greater,
     LessEqual,
     GreaterEqual,
+    Equal,
+    NotEqual,
 }
 
 fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
@@ -266,10 +270,21 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                     body,
                 })
             }
+            Rule::infinite_loop => {
+                let body = pair.into_single_inner().unwrap().try_map_inner()?;
+                Ok(Stmt::WhileLoop {
+                    condition: Expr::Literal {
+                        value: Literal::Bool(true),
+                    },
+                    body,
+                })
+            }
             Rule::return_stmt => {
                 let retval = pair.into_single_inner().unwrap().try_into()?;
                 Ok(Stmt::Return { retval })
             }
+            Rule::break_stmt => Ok(Stmt::Break),
+            Rule::continue_stmt => Ok(Stmt::Continue),
             Rule::var_def => {
                 let [name, value] = pair.extract_rules([Rule::ident, Rule::expr]);
                 let name = name.unwrap().as_string();
@@ -343,6 +358,8 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                         Rule::greater => BinaryOp::Greater,
                         Rule::less_equal => BinaryOp::LessEqual,
                         Rule::greater_equal => BinaryOp::GreaterEqual,
+                        Rule::equal => BinaryOp::Equal,
+                        Rule::not_equal => BinaryOp::NotEqual,
                         rule => unreachable!("{rule:?}"),
                     };
                     let rhs = Box::new(rhs.try_into()?);
