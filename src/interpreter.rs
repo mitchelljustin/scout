@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, bail, Error};
 
 use Value::Nil;
 
@@ -133,14 +133,14 @@ fn binary_op_to_fn_path(op: BinaryOp) -> Path {
 mod scout_std {
     use std::io::{stdin, stdout, BufRead, Write};
 
-    use anyhow::anyhow;
+    use anyhow::bail;
 
     use crate::interpreter::{count, native_functions, Value, Value::Nil};
 
     macro expect_arity([$($arg:ident),+] = $args:expr) {
         const ARITY: usize = count!($($arg)+);
         let Ok([$($arg),+]) = <[_; ARITY]>::try_from($args) else {
-            return Err(anyhow!("expected {} arguments", ARITY));
+            bail!("expected {} arguments", ARITY);
         };
     }
 
@@ -164,7 +164,7 @@ mod scout_std {
         }
         fn readline(_env, args) {
             if !args.is_empty() {
-                return Err(anyhow!("expected no arguments"));
+                bail!("expected no arguments");
             }
             let mut out = String::new();
             stdin().lock().read_line(&mut out)?;
@@ -182,7 +182,7 @@ mod scout_std {
         fn num(_env, args) {
             expect_arity!([value] = args);
             let Value::String(string) = value else {
-                return Err(anyhow!("expected string"));
+                bail!("expected string");
             };
             let Ok(value) = string.trim().parse() else {
                 return Ok(Nil);
@@ -194,13 +194,13 @@ mod scout_std {
             Ok(Value::Number(match arg {
                 Value::String(string) => string.len() as _,
                 Value::Array(array) => array.len() as _,
-                _ => return Err(anyhow!("expected string or array"))
+                _ => bail!("expected string or array")
             }))
         }
     ];
 
     pub mod ops {
-        use anyhow::anyhow;
+        use anyhow::{anyhow, bail};
 
         use crate::interpreter::{native_functions, scout_std::expect_arity, Value};
 
@@ -221,52 +221,52 @@ mod scout_std {
             fn sub(_env, args) {
                 expect_arity!([lhs, rhs] = args);
                 let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                    return Err(anyhow!("expected numbers"));
+                    bail!("expected numbers");
                 };
                 Ok(Value::Number(lhs - rhs))
             }
             fn mul(_env, args) {
                 expect_arity!([lhs, rhs] = args);
                 let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                    return Err(anyhow!("expected numbers"));
+                    bail!("expected numbers");
                 };
                 Ok(Value::Number(lhs * rhs))
             }
             fn div(_env, args) {
                 expect_arity!([lhs, rhs] = args);
                 let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                    return Err(anyhow!("expected numbers"));
+                    bail!("expected numbers");
                 };
                 if rhs == 0.0 {
-                    return Err(anyhow!("cannot divide by zero"));
+                    bail!("cannot divide by zero");
                 }
                 Ok(Value::Number(lhs / rhs))
             }
             fn lt(_env, args) {
                 expect_arity!([lhs, rhs] = args);
                 let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                    return Err(anyhow!("expected numbers"));
+                    bail!("expected numbers");
                 };
                 Ok(Value::Bool(lhs < rhs))
             }
             fn gt(_env, args) {
                 expect_arity!([lhs, rhs] = args);
                 let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                    return Err(anyhow!("expected numbers"));
+                    bail!("expected numbers");
                 };
                 Ok(Value::Bool(lhs > rhs))
             }
             fn lte(_env, args) {
                 expect_arity!([lhs, rhs] = args);
                 let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                    return Err(anyhow!("expected numbers"));
+                    bail!("expected numbers");
                 };
                 Ok(Value::Bool(lhs <= rhs))
             }
             fn gte(_env, args) {
                 expect_arity!([lhs, rhs] = args);
                 let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                    return Err(anyhow!("expected numbers"));
+                    bail!("expected numbers");
                 };
                 Ok(Value::Bool(lhs >= rhs))
             }
@@ -325,14 +325,11 @@ impl Environment {
             [item_name] => (self.current_module(), item_name),
             [module_path @ .., item_name] => {
                 let Some(module) = self.find_module(module_path.iter()) else {
-                    return Err(anyhow!(
-                        "no such module: '{}'",
-                        module_path.to_vec().join("::")
-                    ));
+                    bail!("no such module: '{}'", module_path.to_vec().join("::"));
                 };
                 (module, item_name)
             }
-            _ => return Err(anyhow!("can only support `item` or `mod::item`")),
+            _ => bail!("can only support `item` or `mod::item`"),
         };
         self.get_item_from_module(module, item_name)
     }
@@ -343,10 +340,7 @@ impl Environment {
         item_name: &str,
     ) -> anyhow::Result<&'a ModuleItem> {
         let Some(item) = module.items.get(item_name) else {
-            return Err(anyhow!(
-                "no such item in module '{}': '{item_name}'",
-                module.name
-            ));
+            bail!("no such item in module '{}': '{item_name}'", module.name);
         };
         Ok(item)
     }
@@ -460,11 +454,11 @@ impl Environment {
             Stmt::VariableDef { name, value } => {
                 let value = self.eval(value)?;
                 let Some(scope) = self.scope_stack.back_mut() else {
-                    return Err(anyhow!("no scope"));
+                    bail!("no scope");
                 };
                 scope.variables.insert(name, value);
             }
-            Stmt::Return { .. } => return Err(anyhow!("return outside of multiline expression")),
+            Stmt::Return { .. } => bail!("return outside of multiline expression"),
             Stmt::Expr { expr } => {
                 self.eval(expr)?;
             }
@@ -474,7 +468,7 @@ impl Environment {
                 body,
             } => {
                 let Value::Array(target) = self.eval(target)? else {
-                    return Err(anyhow!("for-in expected target to be an array"));
+                    bail!("for-in expected target to be an array");
                 };
                 for item in target {
                     self.push_scope(ScopeContext::ForLoop);
@@ -486,12 +480,14 @@ impl Environment {
             Stmt::WhileLoop { condition, body } => loop {
                 loop {
                     let Value::Bool(condition) = self.eval(condition.clone())? else {
-                        return Err(anyhow!("while expected boolean condition"));
+                        bail!("`while` expected boolean condition");
                     };
                     if !condition {
                         return Ok(());
                     }
+                    self.push_scope(ScopeContext::WhileLoop);
                     self.eval_multiline(body.clone(), false)?;
+                    self.pop_scope();
                 }
             },
             Stmt::Break => {
@@ -508,7 +504,7 @@ impl Environment {
                             )
                         })
                 else {
-                    return Err(anyhow!("'break' outside of for loop or while loop"));
+                    bail!("'break' outside of for loop or while loop");
                 };
                 self.scope_stack.truncate(index);
             }
@@ -519,7 +515,7 @@ impl Environment {
 
     fn define_variable(&mut self, name: String, value: Value) -> anyhow::Result<()> {
         let Some(scope) = self.scope_stack.back_mut() else {
-            return Err(anyhow!("variable defined outside of a scope"));
+            bail!("variable defined outside of a scope");
         };
         scope.variables.insert(name, value);
         Ok(())
@@ -538,7 +534,7 @@ impl Environment {
                 else_body,
             } => {
                 let Value::Bool(condition) = self.eval(*condition)? else {
-                    return Err(anyhow!("if condition expected to be a bool"));
+                    bail!("if condition expected to be a bool");
                 };
                 if condition {
                     self.push_scope(ScopeContext::IfBody);
@@ -580,18 +576,18 @@ impl Environment {
             .map(|arg| self.eval(arg))
             .collect::<Result<Vec<_>, _>>()?;
         let ModuleItem::Function(function) = self.resolve_item(path)? else {
-            return Err(anyhow!("not a function: {path}"));
+            bail!("not a function: {path}");
         };
         match function.clone() {
             Function::Native(native_function) => native_function(self, args)
                 .map_err(|err| anyhow!("while evaluating {path}(): {err}")),
             Function::User(UserFunction { params, body, .. }) => {
                 if args.len() != params.len() {
-                    return Err(anyhow!(
+                    bail!(
                         "arity mismatch, expected {}, got {}",
                         params.len(),
                         args.len()
-                    ));
+                    );
                 }
                 let func_id = format!("{path}({})", params.len());
                 self.push_scope(ScopeContext::Function {
