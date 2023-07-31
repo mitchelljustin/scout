@@ -20,6 +20,15 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Path(pub(crate) Vec<String>);
 
+impl<'a, I> From<I> for Path
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    fn from(value: I) -> Self {
+        Self(value.into_iter().map(ToString::to_string).collect())
+    }
+}
+
 impl Display for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.clone().join("::"))
@@ -140,7 +149,7 @@ fn test_programs() {
         Program {
             body: vec![Stmt::Expr {
                 expr: Expr::Call {
-                    path: Path(["std", "print"].map(ToString::to_string).to_vec()),
+                    path: Path::from(["std", "print"]),
                     args: vec![Expr::Literal {
                         value: Literal::Number(1.0),
                     }]
