@@ -179,7 +179,7 @@ pub mod ops {
 pub const MODULE_STD: &str = "std";
 pub const MODULE_OPS: &str = "ops";
 
-pub fn init_modules(env: &mut Environment) {
+pub fn init(env: &mut Environment) {
     env.define_module(MODULE_STD.to_string()).unwrap();
     env.define_native_functions(NATIVE_FUNCTIONS);
 

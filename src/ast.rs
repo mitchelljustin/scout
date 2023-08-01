@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
+use std::ops::Add;
 use std::str::FromStr;
 
 use anyhow::anyhow;
@@ -32,6 +33,16 @@ where
 impl Display for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.clone().join("::"))
+    }
+}
+
+impl Add<String> for &Path {
+    type Output = Path;
+
+    fn add(self, rhs: String) -> Self::Output {
+        let mut components = self.0.clone();
+        components.push(rhs);
+        Path(components)
     }
 }
 
@@ -119,6 +130,7 @@ pub enum BinaryOp {
     NotEqual,
 }
 
+#[allow(dead_code)]
 fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
     println!(
         "{}{:?} '{}'",

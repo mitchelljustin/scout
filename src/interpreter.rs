@@ -36,7 +36,7 @@ pub enum Function {
 
 #[derive(Clone, Default)]
 pub struct Module {
-    name: String,
+    path: Path,
     items: HashMap<String, ModuleItem>,
 }
 
@@ -49,7 +49,7 @@ pub enum ModuleItem {
 
 #[derive(Debug)]
 pub struct Scope {
-    context: ScopeContext,
+    _context: ScopeContext,
     variables: HashMap<String, Value>,
 }
 
@@ -106,8 +106,6 @@ fn binary_op_to_fn_path(op: BinaryOp) -> Path {
     [MODULE_STD, MODULE_OPS, op_fn_name].into()
 }
 
-const MODULE_ROOT: &str = "_main";
-
 impl Module {
     fn define_item(
         &mut self,
@@ -119,7 +117,7 @@ impl Module {
             Ok(_) => Ok(()),
             Err(_) => Err(anyhow!(
                 "module '{}' already has {item_type} named '{name}'",
-                self.name,
+                self.path,
             )),
         }
     }
@@ -151,20 +149,12 @@ impl Environment {
                 };
                 (module, item_name)
             }
-            _ => bail!("can only support `item` or `mod::item`"),
+            pat => unreachable!("path pattern: {pat:?}"),
         };
-        self.get_item_from_module(module, item_name)
-    }
-
-    fn get_item_from_module<'a>(
-        &self,
-        module: &'a Module,
-        item_name: &str,
-    ) -> anyhow::Result<&'a ModuleItem> {
-        let Some(item) = module.items.get(item_name) else {
-            bail!("no such item in module '{}': '{item_name}'", module.name);
-        };
-        Ok(item)
+        module.items.get(item_name).ok_or(anyhow!(
+            "no such item in module '{}': '{item_name}'",
+            module.path
+        ))
     }
 
     fn resolve_var(&self, name: &str) -> anyhow::Result<&Value> {
@@ -204,17 +194,20 @@ impl Environment {
 
     fn define_module(&mut self, module_name: String) -> anyhow::Result<()> {
         let current_module = self.current_module_mut();
-        let current_module_name = current_module.name.clone();
+        let module = Module {
+            path: &current_module.path + module_name.clone(),
+            items: Default::default(),
+        };
         current_module
             .items
-            .try_insert(module_name.clone(), ModuleItem::Module(Module::default()))
+            .try_insert(module_name.clone(), ModuleItem::Module(module))
             .map_err(|_| {
                 anyhow!(
                     "module '{module_name}' already defined in '{}'",
-                    current_module_name
+                    current_module.path
                 )
             })?;
-        self.current_module_path.0.push(module_name.clone());
+        self.current_module_path.0.push(module_name);
         Ok(())
     }
 
@@ -226,13 +219,13 @@ impl Environment {
         let mut env = Environment {
             root_module: Module {
                 items: Default::default(),
-                name: MODULE_ROOT.to_string(),
+                path: Path(Vec::new()),
             },
             scope_stack: Default::default(),
             current_module_path: Default::default(),
         };
         env.push_scope(ScopeContext::Root);
-        stdlib::init_modules(&mut env);
+        stdlib::init(&mut env);
         env
     }
 
@@ -264,10 +257,7 @@ impl Environment {
             }
             Stmt::VariableDef { name, value } => {
                 let value = self.eval(value)?;
-                let Some(scope) = self.scope_stack.back_mut() else {
-                    bail!("no scope");
-                };
-                scope.variables.insert(name, value);
+                self.define_variable(name, value)?;
             }
             Stmt::Expr { expr } => {
                 self.eval(expr)?;
@@ -309,7 +299,7 @@ impl Environment {
 
     fn define_variable(&mut self, name: String, value: Value) -> anyhow::Result<()> {
         let Some(scope) = self.scope_stack.back_mut() else {
-            bail!("variable defined outside of a scope");
+            panic!("no scope");
         };
         scope.variables.insert(name, value);
         Ok(())
@@ -377,14 +367,15 @@ impl Environment {
                 native_function(self, args).context(format!("while evaluating {path}()"))
             }
             Function::User(UserFunction { params, body, .. }) => {
+                let context = format!("while evaluating {path}({})", params.len());
+
                 if args.len() != params.len() {
                     bail!(
-                        "arity mismatch, expected {}, got {}",
+                        "{context}: arity mismatch, expected {}, got {}",
                         params.len(),
                         args.len()
                     );
                 }
-                let func_id = format!("{path}({})", params.len());
                 self.push_scope(ScopeContext::Function {
                     path: path.clone(),
                     arity: params.len(),
@@ -392,9 +383,7 @@ impl Environment {
                 for (arg, param) in args.into_iter().zip(params) {
                     self.define_variable(param, arg)?;
                 }
-                let retval = self
-                    .eval(body.clone())
-                    .context(format!("while evaluating {func_id}"))?;
+                let retval = self.eval(body.clone()).context(context)?;
                 self.pop_scope();
                 Ok(retval)
             }
@@ -402,6 +391,9 @@ impl Environment {
     }
 
     fn eval_multiline(&mut self, body: Vec<Stmt>, is_function: bool) -> Result<Value, Error> {
+        if body.is_empty() {
+            return Ok(Nil);
+        }
         let last_index = body.len() - 1;
         for (i, stmt) in body.into_iter().enumerate() {
             match stmt {
@@ -421,7 +413,7 @@ impl Environment {
 
     fn push_scope(&mut self, context: ScopeContext) {
         self.scope_stack.push_back(Scope {
-            context,
+            _context: context,
             variables: Default::default(),
         });
     }
