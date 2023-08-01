@@ -266,7 +266,9 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
     type Error = anyhow::Error;
 
     fn try_from(pair: Pair<'_, Rule>) -> Result<Self, Self::Error> {
-        match pair.as_rule() {
+        let rule = pair.as_rule();
+        let _literal = pair.as_str();
+        match rule {
             Rule::stmt_line | Rule::stmt | Rule::top_stmt | Rule::top_stmt_line => {
                 pair.into_single_inner().unwrap().try_into()
             }

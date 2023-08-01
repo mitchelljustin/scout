@@ -9,3 +9,10 @@ module util
         array
     end
 end
+
+for i in [1, 2, 3]
+    std::print(i)
+    if i == 2
+        break
+    end
+end

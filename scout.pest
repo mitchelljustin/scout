@@ -102,8 +102,8 @@ return_stmt = {
 if_expr = {
     "if" ~ expr ~ NEWLINE ~
         then_body ~
-    "else" ~ NEWLINE ~
-        else_body? ~
+//     ("else" ~ NEWLINE ~
+//         else_body ~ NEWLINE)? ~
     "end"
 }
 

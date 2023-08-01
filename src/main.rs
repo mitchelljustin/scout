@@ -12,6 +12,7 @@ use std::{fs, io};
 use crate::interpreter::{Environment, Value};
 
 mod ast;
+mod compiler;
 mod interpreter;
 
 fn main() -> anyhow::Result<()> {

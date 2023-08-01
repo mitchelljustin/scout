@@ -63,10 +63,12 @@ pub enum ScopeContext {
     ElseBody,
 }
 
+#[derive(Default)]
 pub struct Environment {
     current_module_path: Path,
     root_module: Module,
     scope_stack: VecDeque<Scope>,
+    is_breaking_loop: bool,
 }
 
 impl Display for Value {
@@ -163,7 +165,7 @@ impl Environment {
                 return Ok(value);
             }
         }
-        bail!("no such variable: '{name}'")
+        bail!("undefined variable: '{name}'")
     }
 
     fn current_module(&self) -> &Module {
@@ -216,14 +218,7 @@ impl Environment {
     }
 
     pub fn new() -> Environment {
-        let mut env = Environment {
-            root_module: Module {
-                items: Default::default(),
-                path: Path(Vec::new()),
-            },
-            scope_stack: Default::default(),
-            current_module_path: Default::default(),
-        };
+        let mut env = Environment::default();
         env.push_scope(ScopeContext::Root);
         stdlib::init(&mut env);
         env
@@ -239,7 +234,7 @@ impl Environment {
 
     pub fn eval_source(&mut self, source: &str) -> anyhow::Result<Value> {
         let Program { body } = source.parse()?;
-        self.eval_multiline(body, false)
+        self.eval_multiline(body, false, false)
     }
 
     fn exec(&mut self, stmt: Stmt) -> anyhow::Result<()> {
@@ -273,8 +268,12 @@ impl Environment {
                 for item in target {
                     self.push_scope(ScopeContext::ForLoop);
                     self.define_variable(iterator.clone(), item)?;
-                    self.eval_multiline(body.clone(), false)?;
+                    self.eval_multiline(body.clone(), false, false)?;
                     self.pop_scope();
+                    if self.is_breaking_loop {
+                        self.is_breaking_loop = false;
+                        break;
+                    }
                 }
             }
             Stmt::WhileLoop { condition, body } => loop {
@@ -286,13 +285,17 @@ impl Environment {
                         return Ok(());
                     }
                     self.push_scope(ScopeContext::WhileLoop);
-                    self.eval_multiline(body.clone(), false)?;
+                    self.eval_multiline(body.clone(), false, false)?;
                     self.pop_scope();
+                    if self.is_breaking_loop {
+                        self.is_breaking_loop = false;
+                        break;
+                    }
                 }
             },
-            Stmt::Return { .. } | Stmt::Break | Stmt::Continue => {
-                unimplemented!();
-            }
+            Stmt::Return { .. } => bail!("`return` outside of function"),
+            Stmt::Break => bail!("`break` outside of loop"),
+            Stmt::Continue => bail!("`continue` outside of loop"),
         }
         Ok(())
     }
@@ -307,7 +310,7 @@ impl Environment {
 
     fn eval(&mut self, expr: Expr) -> anyhow::Result<Value> {
         match expr {
-            Expr::Multiline { body } => self.eval_multiline(body, false),
+            Expr::Multiline { body } => self.eval_multiline(body, false, false),
             Expr::Variable { name } => {
                 let value = self.resolve_var(&name)?;
                 Ok(value.clone())
@@ -322,13 +325,13 @@ impl Environment {
                 };
                 if condition {
                     self.push_scope(ScopeContext::IfBody);
-                    let result = self.eval_multiline(then_body, false)?;
+                    let result = self.eval_multiline(then_body, false, false)?;
                     self.pop_scope();
                     return Ok(result);
                 }
                 if !condition && let Some(else_body) = else_body {
                     self.push_scope(ScopeContext::ElseBody);
-                    let result = self.eval_multiline(else_body, false)?;
+                    let result = self.eval_multiline(else_body, false, false)?;
                     self.pop_scope();
                     return Ok(result);
                 }
@@ -383,14 +386,22 @@ impl Environment {
                 for (arg, param) in args.into_iter().zip(params) {
                     self.define_variable(param, arg)?;
                 }
-                let retval = self.eval(body.clone()).context(context)?;
+                let retval = match body.clone() {
+                    Expr::Multiline { body } => self.eval_multiline(body, true, false),
+                    expr => self.eval(expr),
+                }?;
                 self.pop_scope();
                 Ok(retval)
             }
         }
     }
 
-    fn eval_multiline(&mut self, body: Vec<Stmt>, is_function: bool) -> Result<Value, Error> {
+    fn eval_multiline(
+        &mut self,
+        body: Vec<Stmt>,
+        is_function: bool,
+        is_loop: bool,
+    ) -> Result<Value, Error> {
         if body.is_empty() {
             return Ok(Nil);
         }
@@ -398,6 +409,11 @@ impl Environment {
         for (i, stmt) in body.into_iter().enumerate() {
             match stmt {
                 Stmt::Return { retval } if is_function => return self.eval(retval),
+                Stmt::Continue if is_loop => break,
+                Stmt::Break if is_loop => {
+                    self.is_breaking_loop = true;
+                    break;
+                }
                 Stmt::Expr { expr } if i == last_index => return self.eval(expr),
                 stmt => {
                     self.exec(stmt)?;
