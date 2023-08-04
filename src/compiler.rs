@@ -16,11 +16,19 @@ pub enum Instruction {
     End { id: usize },
     If { id: usize },
     Else { id: usize },
-    ForIn { iterator: String, id: usize },
+    Branch { id: usize, cond: BranchCond },
+    ForIn { id: usize, iterator: String },
     While { id: usize },
 
     Continue { id: usize },
     Break { id: usize },
+}
+
+pub enum BranchCond {
+    EqZero,
+    NeZero,
+    GtZero,
+    LtZero,
 }
 
 type InstructionVec = Vec<Instruction>;
