@@ -20,27 +20,35 @@ mod stdlib;
 pub enum RuntimeError {
     #[error("arity mismatch: expected {expected} args, got {actual} args")]
     ArityMismatch { expected: usize, actual: usize },
+
     #[error("type mismatch: expected {expected}")]
     TypeMismatch { expected: &'static str },
+
     #[error("cannot divide by zero")]
     DivideByZero,
+
     #[error("{item_type} '{item_name}' already defined in {path}'")]
     AlreadyDefined {
         path: Path,
         item_name: String,
         item_type: &'static str,
     },
+
     #[error("no such module: {path}")]
     NoSuchModule { path: Path },
+
     #[error("undefined variable: '{name}'")]
     UndefinedVariable { name: String },
+
     #[error("item '{item_name}' not found in {path}")]
     ItemNotFound { path: Path, item_name: String },
+
     #[error("illegal `{keyword}` outside of {expected_context}")]
     IllegalControlFlow {
         keyword: &'static str,
         expected_context: &'static str,
     },
+
     #[error("control flow")]
     ControlFlowException(ControlFlow<Value>),
 }
@@ -480,8 +488,8 @@ impl Environment {
                 };
                 self.pop_scope();
                 match result {
-                    Err(ControlFlowException(Break(retval))) => Ok(retval),
-                    Ok(retval) => Ok(retval),
+                    // `return`
+                    Err(ControlFlowException(Break(retval))) | Ok(retval) => Ok(retval),
                     err => err,
                 }
             }

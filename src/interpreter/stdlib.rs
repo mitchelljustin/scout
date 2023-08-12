@@ -28,7 +28,11 @@ macro_rules! native_function_def {
 
     ($fn_name:ident ($($arg:ident),+) $body:tt) => {
         fn $fn_name(args: Vec<Value>) -> $crate::interpreter::Result {
-            $crate::interpreter::stdlib::expect_arity!([$($arg),+] = args);
+            const ARITY: usize = count!($($arg)+);
+            let actual = args.len();
+            let Ok([$($arg),+]) = <[Value; ARITY]>::try_from(args) else {
+                return Err($crate::interpreter::RuntimeError::ArityMismatch { expected: ARITY, actual });
+            };
             $body
         }
     };
@@ -52,14 +56,6 @@ macro native_functions(
             ),
         )+
     ];
-}
-
-macro expect_arity([$($arg:ident),+] = $args:expr) {
-    const ARITY: usize = count!($($arg)+);
-    let actual = $args.len();
-    let Ok([$($arg),+]) = <[Value; ARITY]>::try_from($args) else {
-        return Err($crate::interpreter::RuntimeError::ArityMismatch { expected: ARITY, actual });
-    };
 }
 
 native_functions![

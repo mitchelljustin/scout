@@ -18,3 +18,4 @@ for i in util::range(0, 100)
 end
 std::println()
 std::println("out of loop")
+break
