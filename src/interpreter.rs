@@ -1,14 +1,51 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
+use std::ops::ControlFlow::{Break, Continue};
+use std::ops::{ControlFlow, Deref};
 
-use anyhow::{anyhow, bail, Context, Error};
+use thiserror::Error;
 
 use Value::Nil;
 
 use crate::ast::{BinaryOp, Expr, Literal, Path, Program, Stmt};
 use crate::interpreter::stdlib::{MODULE_OPS, MODULE_STD};
+use crate::interpreter::RuntimeError::{
+    AlreadyDefined, ArityMismatch, ControlFlowException, IllegalControlFlow, ItemNotFound,
+    NoSuchModule, TypeMismatch, UndefinedVariable,
+};
 
 mod stdlib;
+
+#[derive(Error, Debug)]
+pub enum RuntimeError {
+    #[error("arity mismatch: expected {expected} args, got {actual} args")]
+    ArityMismatch { expected: usize, actual: usize },
+    #[error("type mismatch: expected {expected}")]
+    TypeMismatch { expected: &'static str },
+    #[error("cannot divide by zero")]
+    DivideByZero,
+    #[error("{item_type} '{item_name}' already defined in {path}'")]
+    AlreadyDefined {
+        path: Path,
+        item_name: String,
+        item_type: &'static str,
+    },
+    #[error("no such module: {path}")]
+    NoSuchModule { path: Path },
+    #[error("undefined variable: '{name}'")]
+    UndefinedVariable { name: String },
+    #[error("item '{item_name}' not found in {path}")]
+    ItemNotFound { path: Path, item_name: String },
+    #[error("illegal `{keyword}` outside of {expected_context}")]
+    IllegalControlFlow {
+        keyword: &'static str,
+        expected_context: &'static str,
+    },
+    #[error("control flow")]
+    ControlFlowException(ControlFlow<Value>),
+}
+
+pub type Result<T = Value, E = RuntimeError> = std::result::Result<T, E>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -26,7 +63,7 @@ pub struct UserFunction {
     body: Expr,
 }
 
-pub type NativeFunction = fn(&mut Environment, Vec<Value>) -> anyhow::Result<Value>;
+pub type NativeFunction = fn(Vec<Value>) -> Result;
 
 #[derive(Clone)]
 pub enum Function {
@@ -68,13 +105,12 @@ pub struct Environment {
     current_module_path: Path,
     root_module: Module,
     scope_stack: VecDeque<Scope>,
-    is_breaking_loop: bool,
 }
 
 trait IterExt<T>: IntoIterator<Item = T> {
-    fn try_map_collect<B, E, F, Col>(self, f: F) -> Result<Col, E>
+    fn try_map_collect<B, E, F, Col>(self, f: F) -> std::result::Result<Col, E>
     where
-        F: FnMut(T) -> Result<B, E>,
+        F: FnMut(T) -> std::result::Result<B, E>,
         Col: FromIterator<B>;
 }
 
@@ -82,9 +118,9 @@ impl<I, T> IterExt<T> for I
 where
     I: IntoIterator<Item = T>,
 {
-    fn try_map_collect<B, E, F, Col>(self, f: F) -> Result<Col, E>
+    fn try_map_collect<B, E, F, Col>(self, f: F) -> std::result::Result<Col, E>
     where
-        F: FnMut(T) -> Result<B, E>,
+        F: FnMut(T) -> std::result::Result<B, E>,
         Col: FromIterator<B>,
     {
         self.into_iter().map(f).collect()
@@ -125,26 +161,27 @@ fn binary_op_to_fn_path(op: BinaryOp) -> Path {
         BinaryOp::Equal => "eq",
         BinaryOp::NotEqual => "ne",
     };
-    [MODULE_STD, MODULE_OPS, op_fn_name].into()
+    [MODULE_STD, MODULE_OPS, op_fn_name].into_iter().collect()
 }
 
 impl Module {
     fn define_item(
         &mut self,
-        item_type: &str,
-        name: String,
+        item_type: &'static str,
+        item_name: String,
         item: ModuleItem,
-    ) -> Result<(), Error> {
-        match self.items.try_insert(name.clone(), item) {
+    ) -> Result<()> {
+        match self.items.try_insert(item_name.clone(), item) {
             Ok(_) => Ok(()),
-            Err(_) => Err(anyhow!(
-                "module '{}' already has {item_type} named '{name}'",
-                self.path,
-            )),
+            Err(_) => Err(AlreadyDefined {
+                path: self.path.clone(),
+                item_type,
+                item_name,
+            }),
         }
     }
 
-    pub fn define_native(&mut self, name: String, function: NativeFunction) -> anyhow::Result<()> {
+    pub fn define_native(&mut self, name: String, function: NativeFunction) -> Result<()> {
         self.define_item(
             "native function",
             name,
@@ -152,7 +189,7 @@ impl Module {
         )
     }
 
-    pub fn define_function(&mut self, function: UserFunction) -> anyhow::Result<()> {
+    pub fn define_function(&mut self, function: UserFunction) -> Result<()> {
         self.define_item(
             "function",
             function.name.clone(),
@@ -162,30 +199,32 @@ impl Module {
 }
 
 impl Environment {
-    fn resolve_item(&self, path: &Path) -> anyhow::Result<&ModuleItem> {
+    fn resolve_item(&self, path: &Path) -> Result<&ModuleItem> {
         let (module, item_name) = match path.0.as_slice() {
             [item_name] => (self.current_module(), item_name),
             [module_path @ .., item_name] => {
                 let Some(module) = self.find_module(module_path.iter()) else {
-                    bail!("no such module: '{}'", module_path.to_vec().join("::"));
+                    return Err(NoSuchModule {
+                        path: module_path.iter().map(Deref::deref).collect(),
+                    });
                 };
                 (module, item_name)
             }
             pat => unreachable!("path pattern: {pat:?}"),
         };
-        module.items.get(item_name).ok_or(anyhow!(
-            "no such item in module '{}': '{item_name}'",
-            module.path
-        ))
+        module.items.get(item_name).ok_or(ItemNotFound {
+            path: module.path.clone(),
+            item_name: item_name.clone(),
+        })
     }
 
-    fn resolve_var(&self, name: &str) -> anyhow::Result<&Value> {
+    fn resolve_var(&self, name: String) -> Result<&Value> {
         for scope in self.scope_stack.iter().rev() {
-            if let Some(value) = scope.variables.get(name) {
+            if let Some(value) = scope.variables.get(&name) {
                 return Ok(value);
             }
         }
-        bail!("undefined variable: '{name}'")
+        Err(UndefinedVariable { name })
     }
 
     fn current_module(&self) -> &Module {
@@ -203,18 +242,23 @@ impl Environment {
         Some(module)
     }
 
-    fn current_module_mut(&mut self) -> &mut Module {
+    fn find_module_mut(&mut self, path: impl Iterator<Item = &String>) -> Option<&mut Module> {
         let mut module = &mut self.root_module;
-        for step in &self.current_module_path.0 {
+        for step in path {
             let Some(ModuleItem::Module(sub_module)) = module.items.get_mut(step) else {
-                panic!("current module not found");
+                return None;
             };
             module = sub_module;
         }
-        module
+        Some(module)
     }
 
-    fn define_module(&mut self, module_name: String) -> anyhow::Result<()> {
+    fn current_module_mut(&mut self) -> &mut Module {
+        self.find_module_mut(self.current_module_path.0.clone().iter())
+            .unwrap()
+    }
+
+    fn define_module(&mut self, module_name: String) -> Result<()> {
         let current_module = self.current_module_mut();
         let module = Module {
             path: &current_module.path + module_name.clone(),
@@ -223,11 +267,10 @@ impl Environment {
         current_module
             .items
             .try_insert(module_name.clone(), ModuleItem::Module(module))
-            .map_err(|_| {
-                anyhow!(
-                    "module '{module_name}' already defined in '{}'",
-                    current_module.path
-                )
+            .map_err(|_| AlreadyDefined {
+                item_type: "module",
+                item_name: module_name.clone(),
+                path: current_module.path.clone(),
             })?;
         self.current_module_path.0.push(module_name);
         Ok(())
@@ -244,7 +287,10 @@ impl Environment {
         env
     }
 
-    fn define_native_functions<const N: usize>(&mut self, functions: [(&str, NativeFunction); N]) {
+    fn define_native_functions(
+        &mut self,
+        functions: impl IntoIterator<Item = (&str, NativeFunction)>,
+    ) {
         for (name, function) in functions {
             self.current_module_mut()
                 .define_native(name.to_string(), function)
@@ -252,12 +298,12 @@ impl Environment {
         }
     }
 
-    pub fn eval_source(&mut self, source: &str) -> anyhow::Result<Value> {
+    pub fn eval_source(&mut self, source: &str) -> Result<Value, anyhow::Error> {
         let Program { body } = source.parse()?;
-        self.eval_multiline(body, false, false)
+        self.eval_multiline(body).map_err(From::from)
     }
 
-    fn exec(&mut self, stmt: Stmt) -> anyhow::Result<()> {
+    fn exec(&mut self, stmt: Stmt) -> Result<()> {
         match stmt {
             Stmt::ModuleDef { name, body } => {
                 self.define_module(name.clone())?;
@@ -283,44 +329,65 @@ impl Environment {
                 body,
             } => {
                 let Value::Array(target) = self.eval(target)? else {
-                    bail!("`for _ in _` expected target to be an array");
+                    return Err(TypeMismatch {
+                        expected: "array iterator",
+                    });
                 };
                 for item in target {
                     self.push_scope(ScopeContext::ForLoop);
                     self.define_variable(iterator.clone(), item)?;
-                    self.eval_multiline(body.clone(), false, false)?;
-                    self.pop_scope();
-                    if self.is_breaking_loop {
-                        self.is_breaking_loop = false;
-                        break;
+                    match self.eval_multiline(body.clone()) {
+                        Err(ControlFlowException(Break(_))) => break,
+                        Err(ControlFlowException(Continue(_))) => continue,
+                        Err(error) => return Err(error),
+                        Ok(_) => {}
                     }
+                    self.pop_scope();
                 }
             }
             Stmt::WhileLoop { condition, body } => loop {
                 loop {
                     let Value::Bool(condition) = self.eval(condition.clone())? else {
-                        bail!("`while` expected boolean condition");
+                        return Err(TypeMismatch {
+                            expected: "boolean condition",
+                        });
                     };
                     if !condition {
                         return Ok(());
                     }
                     self.push_scope(ScopeContext::WhileLoop);
-                    self.eval_multiline(body.clone(), false, false)?;
-                    self.pop_scope();
-                    if self.is_breaking_loop {
-                        self.is_breaking_loop = false;
-                        break;
+                    match self.eval_multiline(body.clone()) {
+                        Err(ControlFlowException(Break(_))) => break,
+                        Err(ControlFlowException(Continue(_))) => continue,
+                        Err(error) => return Err(error),
+                        Ok(_) => {}
                     }
+                    self.pop_scope();
                 }
             },
-            Stmt::Return { .. } => bail!("`return` outside of function"),
-            Stmt::Break => bail!("`break` outside of loop"),
-            Stmt::Continue => bail!("`continue` outside of loop"),
+            Stmt::Return { .. } => {
+                return Err(IllegalControlFlow {
+                    keyword: "return",
+                    expected_context: "function",
+                })
+            }
+            Stmt::Break => {
+                return Err(IllegalControlFlow {
+                    keyword: "break",
+                    expected_context: "loop",
+                })
+            }
+            Stmt::Continue => {
+                return Err(IllegalControlFlow {
+                    keyword: "continue",
+                    expected_context: "loop",
+                })
+            }
         }
         Ok(())
     }
 
-    fn define_variable(&mut self, name: String, value: Value) -> anyhow::Result<()> {
+    fn define_variable(&mut self, name: String, value: Value) -> Result<()> {
         let Some(scope) = self.scope_stack.back_mut() else {
             panic!("no scope");
         };
@@ -328,11 +395,11 @@ impl Environment {
         Ok(())
     }
 
-    fn eval(&mut self, expr: Expr) -> anyhow::Result<Value> {
+    fn eval(&mut self, expr: Expr) -> Result {
         match expr {
-            Expr::Multiline { body } => self.eval_multiline(body, false, false),
+            Expr::Multiline { body } => self.eval_multiline(body),
             Expr::Variable { name } => {
-                let value = self.resolve_var(&name)?;
+                let value = self.resolve_var(name)?;
                 Ok(value.clone())
             }
             Expr::If {
@@ -341,17 +408,19 @@ impl Environment {
                 else_body,
             } => {
                 let Value::Bool(condition) = self.eval(*condition)? else {
-                    bail!("if condition expected to be a bool");
+                    return Err(TypeMismatch {
+                        expected: "boolean condition",
+                    });
                 };
                 if condition {
                     self.push_scope(ScopeContext::IfBody);
-                    let result = self.eval_multiline(then_body, false, false)?;
+                    let result = self.eval_multiline(then_body)?;
                     self.pop_scope();
                     return Ok(result);
                 }
                 if !condition && let Some(else_body) = else_body {
                     self.push_scope(ScopeContext::ElseBody);
-                    let result = self.eval_multiline(else_body, false, false)?;
+                    let result = self.eval_multiline(else_body)?;
                     self.pop_scope();
                     return Ok(result);
                 }
@@ -372,24 +441,21 @@ impl Environment {
         }
     }
 
-    fn resolve_and_call(&mut self, path: &Path, args: Vec<Expr>) -> anyhow::Result<Value> {
+    fn resolve_and_call(&mut self, path: &Path, args: Vec<Expr>) -> Result {
         let args = args.try_map_collect(|arg| self.eval(arg))?;
         let ModuleItem::Function(function) = self.resolve_item(path)? else {
-            bail!("not a function: {path}");
+            return Err(TypeMismatch {
+                expected: "module function",
+            });
         };
         match function.clone() {
-            Function::Native(native_function) => {
-                native_function(self, args).context(format!("while evaluating {path}()"))
-            }
+            Function::Native(native_function) => native_function(args),
             Function::User(UserFunction { params, body, .. }) => {
-                let context = format!("while evaluating {path}({})", params.len());
-
                 if args.len() != params.len() {
-                    bail!(
-                        "{context}: arity mismatch, expected {}, got {}",
-                        params.len(),
-                        args.len()
-                    );
+                    return Err(ArityMismatch {
+                        expected: params.len(),
+                        actual: args.len(),
+                    });
                 }
                 self.push_scope(ScopeContext::Function {
                     path: path.clone(),
@@ -399,33 +465,27 @@ impl Environment {
                     self.define_variable(param, arg)?;
                 }
                 let retval = match body.clone() {
-                    Expr::Multiline { body } => self.eval_multiline(body, true, false),
+                    Expr::Multiline { body } => self.eval_multiline(body),
                     expr => self.eval(expr),
                 }?;
                 self.pop_scope();
-                Ok(retval)
+                return Ok(retval);
             }
         }
     }
 
-    fn eval_multiline(
-        &mut self,
-        body: Vec<Stmt>,
-        is_function: bool,
-        is_loop: bool,
-    ) -> Result<Value, Error> {
+    fn eval_multiline(&mut self, body: Vec<Stmt>) -> Result {
         if body.is_empty() {
             return Ok(Nil);
         }
         let last_index = body.len() - 1;
         for (i, stmt) in body.into_iter().enumerate() {
             match stmt {
-                Stmt::Return { retval } if is_function => return self.eval(retval),
-                Stmt::Continue if is_loop => break,
-                Stmt::Break if is_loop => {
-                    self.is_breaking_loop = true;
-                    break;
+                Stmt::Return { retval } => {
+                    return Err(ControlFlowException(Break(self.eval(retval)?)))
                 }
+                Stmt::Continue => return Err(ControlFlowException(Continue(()))),
+                Stmt::Break => return Err(ControlFlowException(Break(Nil))),
                 Stmt::Expr { expr } if i == last_index => return self.eval(expr),
                 stmt => {
                     self.exec(stmt)?;

@@ -1,7 +1,6 @@
 use std::io::{stdin, stdout, BufRead, Write};
 
-use anyhow::bail;
-
+use crate::interpreter::RuntimeError::TypeMismatch;
 use crate::interpreter::{Environment, Value, Value::Nil};
 
 pub macro replace_expr($_t:tt $sub:expr) {
@@ -12,14 +11,38 @@ pub macro count( $($xs:tt)* ) {
     0usize $(+ replace_expr!($xs 1usize))*
 }
 
+#[macro_export]
+macro_rules! native_function_def {
+    ($fn_name:ident () $body:tt) => {
+        fn $fn_name(args: Vec<Value>) -> $crate::interpreter::Result {
+            if !args.is_empty() {
+                return Err($crate::interpreter::RuntimeError::ArityMismatch { expected: 0, actual: args.len() });
+            }
+            $body
+        }
+    };
+
+    ($fn_name:ident (...$args:ident) $body:tt) => {
+        fn $fn_name($args: Vec<Value>) -> $crate::interpreter::Result $body
+    };
+
+    ($fn_name:ident ($($arg:ident),+) $body:tt) => {
+        fn $fn_name(args: Vec<Value>) -> $crate::interpreter::Result {
+            $crate::interpreter::stdlib::expect_arity!([$($arg),+] = args);
+            $body
+        }
+    };
+}
+
 macro native_functions(
     [$const_name:ident]
-        $(
-            fn $fn_name:ident($env:ident, $args:ident) $body:tt
-        )+
-    ) {
     $(
-        fn $fn_name($env: &mut $crate::interpreter::Environment, $args: Vec<Value>) -> anyhow::Result<Value> $body
+        fn $fn_name:ident $args:tt $body:tt
+    )+
+) {
+    use crate::native_function_def;
+    $(
+        native_function_def!{ $fn_name $args $body }
     )+
     pub const $const_name: [(&str, $crate::interpreter::NativeFunction); $crate::interpreter::stdlib::count!($($fn_name)+)] = [
         $(
@@ -33,14 +56,15 @@ macro native_functions(
 
 macro expect_arity([$($arg:ident),+] = $args:expr) {
     const ARITY: usize = count!($($arg)+);
-    let Ok([$($arg),+]) = <[_; ARITY]>::try_from($args) else {
-        bail!("expected {} arguments", ARITY);
+    let actual = $args.len();
+    let Ok([$($arg),+]) = <[Value; ARITY]>::try_from($args) else {
+        return Err($crate::interpreter::RuntimeError::ArityMismatch { expected: ARITY, actual });
     };
 }
 
 native_functions![
     [NATIVE_FUNCTIONS]
-    fn print(_env, args) {
+    fn print(...args) {
         let num_args = args.len();
         for (i, arg) in args.into_iter().enumerate() {
             print!("{arg}");
@@ -48,23 +72,20 @@ native_functions![
                 print!(" ");
             }
         }
-        stdout().lock().flush()?;
+        stdout().lock().flush().unwrap();
         Ok(Nil)
     }
-    fn println(_env, args) {
-        print(_env, args)?;
+    fn println(...args) {
+        print(args)?;
         println!();
         Ok(Nil)
     }
-    fn readline(_env, args) {
-        if !args.is_empty() {
-            bail!("expected no arguments");
-        }
+    fn readline() {
         let mut out = String::new();
-        stdin().lock().read_line(&mut out)?;
+        stdin().lock().read_line(&mut out).unwrap();
         Ok(Value::String(out))
     }
-    fn str(_env, args) {
+    fn str(...args) {
         Ok(
             Value::String(
                 args
@@ -73,36 +94,32 @@ native_functions![
             )
         )
     }
-    fn num(_env, args) {
-        expect_arity!([value] = args);
+    fn num(value) {
         let Value::String(string) = value else {
-            bail!("expected string");
+            return Err(TypeMismatch { expected: "string" });
         };
         let Ok(value) = string.trim().parse() else {
             return Ok(Nil);
         };
         Ok(Value::Number(value))
     }
-    fn len(_env, args) {
-        expect_arity!([arg] = args);
+    fn len(arg) {
         Ok(Value::Number(match arg {
             Value::String(string) => string.len() as _,
             Value::Array(array) => array.len() as _,
-            _ => bail!("expected string or array")
+            _ => return Err(TypeMismatch { expected: "string or array" })
         }))
     }
 ];
 
 pub mod ops {
-    use crate::interpreter::stdlib::{expect_arity, native_functions};
+    use crate::interpreter::stdlib::native_functions;
+    use crate::interpreter::RuntimeError::{DivideByZero, TypeMismatch};
     use crate::interpreter::Value;
-
-    use anyhow::bail;
 
     native_functions!(
         [NATIVE_FUNCTIONS]
-        fn add(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn add(lhs, rhs) {
             match (lhs, rhs) {
                 (Value::Number(lhs), Value::Number(rhs)) => Ok(Value::Number(lhs + rhs)),
                 (Value::String(lhs), Value::String(rhs)) => Ok(Value::String(lhs + &rhs)),
@@ -110,67 +127,58 @@ pub mod ops {
                     lhs.extend(rhs);
                     Ok(Value::Array(lhs))
                 }
-                _ => bail!("expected strings, numbers or arrays")
+                _ => return Err(TypeMismatch { expected: "strings, numbers or arrays" })
             }
         }
-        fn sub(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn sub(lhs, rhs) {
             let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                bail!("expected numbers");
+                return Err(TypeMismatch { expected: "numbers" });
             };
             Ok(Value::Number(lhs - rhs))
         }
-        fn mul(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn mul(lhs, rhs) {
             let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                bail!("expected numbers");
+                return Err(TypeMismatch { expected: "numbers" });
             };
             Ok(Value::Number(lhs * rhs))
         }
-        fn div(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn div(lhs, rhs) {
             let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                bail!("expected numbers");
+                return Err(TypeMismatch { expected: "numbers" });
             };
             if rhs == 0.0 {
-                bail!("cannot divide by zero");
+                return Err(DivideByZero)
             }
             Ok(Value::Number(lhs / rhs))
         }
-        fn lt(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn lt(lhs, rhs) {
             let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                bail!("expected numbers");
+                return Err(TypeMismatch { expected: "numbers" });
             };
             Ok(Value::Bool(lhs < rhs))
         }
-        fn gt(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn gt(lhs, rhs) {
             let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                bail!("expected numbers");
+                return Err(TypeMismatch { expected: "numbers" });
             };
             Ok(Value::Bool(lhs > rhs))
         }
-        fn lte(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn lte(lhs, rhs) {
             let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                bail!("expected numbers");
+                return Err(TypeMismatch { expected: "numbers" });
             };
             Ok(Value::Bool(lhs <= rhs))
         }
-        fn gte(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn gte(lhs, rhs) {
             let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) else {
-                bail!("expected numbers");
+                return Err(TypeMismatch { expected: "numbers" });
             };
             Ok(Value::Bool(lhs >= rhs))
         }
-        fn eq(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn eq(lhs, rhs) {
             Ok(Value::Bool(lhs == rhs))
         }
-        fn ne(_env, args) {
-            expect_arity!([lhs, rhs] = args);
+        fn ne(lhs, rhs) {
             Ok(Value::Bool(lhs != rhs))
         }
     );

@@ -21,12 +21,9 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Path(pub(crate) Vec<String>);
 
-impl<'a, I> From<I> for Path
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    fn from(value: I) -> Self {
-        Self(value.into_iter().map(ToString::to_string).collect())
+impl<'a> FromIterator<&'a str> for Path {
+    fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
+        Self(iter.into_iter().map(ToString::to_string).collect())
     }
 }
 
@@ -161,7 +158,7 @@ fn test_programs() {
         Program {
             body: vec![Stmt::Expr {
                 expr: Expr::Call {
-                    path: Path::from(["std", "print"]),
+                    path: ["std", "print"].collect(),
                     args: vec![Expr::Literal {
                         value: Literal::Number(1.0),
                     }]
