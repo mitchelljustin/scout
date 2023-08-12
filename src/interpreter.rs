@@ -388,10 +388,20 @@ impl Environment {
     }
 
     fn define_variable(&mut self, name: String, value: Value) -> Result<()> {
-        let Some(scope) = self.scope_stack.back_mut() else {
-            panic!("no scope");
-        };
-        scope.variables.insert(name, value);
+        if let Some(scope) = self
+            .scope_stack
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.variables.contains_key(&name))
+        {
+            scope.variables.insert(name, value);
+        } else {
+            self.scope_stack
+                .back_mut()
+                .expect("no scope")
+                .variables
+                .insert(name, value);
+        }
         Ok(())
     }
 
@@ -464,12 +474,16 @@ impl Environment {
                 for (arg, param) in args.into_iter().zip(params) {
                     self.define_variable(param, arg)?;
                 }
-                let retval = match body.clone() {
+                let result = match body.clone() {
                     Expr::Multiline { body } => self.eval_multiline(body),
                     expr => self.eval(expr),
-                }?;
+                };
                 self.pop_scope();
-                return Ok(retval);
+                match result {
+                    Err(ControlFlowException(Break(retval))) => Ok(retval),
+                    Ok(retval) => Ok(retval),
+                    err => err,
+                }
             }
         }
     }

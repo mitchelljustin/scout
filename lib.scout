@@ -10,9 +10,11 @@ module util
     end
 end
 
-for i in [1, 2, 3]
-    std::print(i)
-    if i == 2
+for i in util::range(0, 100)
+    std::print(i, "")
+    if i > 10
         break
     end
 end
+std::println()
+std::println("out of loop")
