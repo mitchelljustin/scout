@@ -1,7 +1,8 @@
 use std::io::{stdin, stdout, BufRead, Write};
 
+use crate::interpreter::runtime::Runtime;
 use crate::interpreter::RuntimeError::TypeMismatch;
-use crate::interpreter::{Environment, Value, Value::Nil};
+use crate::interpreter::{Value, Value::Nil};
 
 pub macro replace_expr($_t:tt $sub:expr) {
     $sub
@@ -14,7 +15,7 @@ pub macro count( $($xs:tt)* ) {
 #[macro_export]
 macro_rules! native_function_def {
     ($fn_name:ident () $body:tt) => {
-        fn $fn_name(args: Vec<Value>) -> $crate::interpreter::Result {
+        fn $fn_name(args: Vec<Value>) -> $crate::interpreter::error::Result {
             if !args.is_empty() {
                 return Err($crate::interpreter::RuntimeError::ArityMismatch { expected: 0, actual: args.len() });
             }
@@ -23,11 +24,11 @@ macro_rules! native_function_def {
     };
 
     ($fn_name:ident (...$args:ident) $body:tt) => {
-        fn $fn_name($args: Vec<Value>) -> $crate::interpreter::Result $body
+        fn $fn_name($args: Vec<Value>) -> $crate::interpreter::error::Result $body
     };
 
     ($fn_name:ident ($($arg:ident),+) $body:tt) => {
-        fn $fn_name(args: Vec<Value>) -> $crate::interpreter::Result {
+        fn $fn_name(args: Vec<Value>) -> $crate::interpreter::error::Result {
             const ARITY: usize = count!($($arg)+);
             let actual = args.len();
             let Ok([$($arg),+]) = <[Value; ARITY]>::try_from(args) else {
@@ -109,8 +110,8 @@ native_functions![
 ];
 
 pub mod ops {
+    use crate::interpreter::error::RuntimeError::{DivideByZero, TypeMismatch};
     use crate::interpreter::stdlib::native_functions;
-    use crate::interpreter::RuntimeError::{DivideByZero, TypeMismatch};
     use crate::interpreter::Value;
 
     native_functions!(
@@ -183,7 +184,7 @@ pub mod ops {
 pub const MODULE_STD: &str = "std";
 pub const MODULE_OPS: &str = "ops";
 
-pub fn init(env: &mut Environment) {
+pub fn init(env: &mut Runtime) {
     env.define_module(MODULE_STD.to_string()).unwrap();
     env.define_native_functions(NATIVE_FUNCTIONS);
 

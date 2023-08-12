@@ -9,14 +9,16 @@ extern crate core;
 use std::io::{BufRead, Write};
 use std::{fs, io};
 
-use crate::interpreter::{Environment, Value};
+use interpreter::Runtime;
+
+use crate::interpreter::Value;
 
 mod ast;
 mod interpreter;
 
 fn main() -> anyhow::Result<()> {
+    let mut env = Runtime::new();
     let source = fs::read_to_string("./lib.scout")?;
-    let mut env = Environment::new();
     env.eval_source(&source)?;
     print!(">> ");
     io::stdout().flush()?;
