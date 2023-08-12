@@ -71,6 +71,26 @@ pub struct Environment {
     is_breaking_loop: bool,
 }
 
+trait IterExt<T>: IntoIterator<Item = T> {
+    fn try_map_collect<B, E, F, Col>(self, f: F) -> Result<Col, E>
+    where
+        F: FnMut(T) -> Result<B, E>,
+        Col: FromIterator<B>;
+}
+
+impl<I, T> IterExt<T> for I
+where
+    I: IntoIterator<Item = T>,
+{
+    fn try_map_collect<B, E, F, Col>(self, f: F) -> Result<Col, E>
+    where
+        F: FnMut(T) -> Result<B, E>,
+        Col: FromIterator<B>,
+    {
+        self.into_iter().map(f).collect()
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -342,12 +362,7 @@ impl Environment {
                 Literal::Bool(value) => Value::Bool(value),
                 Literal::Number(value) => Value::Number(value),
                 Literal::String(value) => Value::String(value),
-                Literal::Array(exprs) => Value::Array(
-                    exprs
-                        .into_iter()
-                        .map(|expr| self.eval(expr))
-                        .collect::<Result<_, _>>()?,
-                ),
+                Literal::Array(exprs) => Value::Array(exprs.try_map_collect(|arg| self.eval(arg))?),
             }),
             Expr::Binary { lhs, op, rhs } => {
                 let path = binary_op_to_fn_path(op);
@@ -358,10 +373,7 @@ impl Environment {
     }
 
     fn resolve_and_call(&mut self, path: &Path, args: Vec<Expr>) -> anyhow::Result<Value> {
-        let args = args
-            .into_iter()
-            .map(|arg| self.eval(arg))
-            .collect::<Result<Vec<_>, _>>()?;
+        let args = args.try_map_collect(|arg| self.eval(arg))?;
         let ModuleItem::Function(function) = self.resolve_item(path)? else {
             bail!("not a function: {path}");
         };
