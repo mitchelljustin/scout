@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::ops::Add;
 use std::str::FromStr;
 
-use anyhow::anyhow;
+use anyhow::bail;
 use pest::iterators::Pair;
 use pest::{Parser, RuleType};
 use pest_derive::Parser;
@@ -176,7 +176,7 @@ where
     fn inner_as_strings(self) -> Vec<String>;
     fn into_single_inner(self) -> Option<Pair<'a, R>>;
     fn into_by_rule(self) -> ByRule<'a, R>;
-    fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
+    fn try_into_inner<T, Col>(self) -> Result<Col, T::Error>
     where
         T: TryFrom<Pair<'a, R>>,
         Col: FromIterator<T>;
@@ -211,7 +211,7 @@ where
         ByRule(map)
     }
 
-    fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
+    fn try_into_inner<T, Col>(self) -> Result<Col, T::Error>
     where
         T: TryFrom<Pair<'a, R>>,
         Col: FromIterator<T>,
@@ -248,7 +248,7 @@ impl TryFrom<Pair<'_, Rule>> for Program {
 
     fn try_from(pair: Pair<Rule>) -> Result<Self, Self::Error> {
         let Rule::program = pair.as_rule() else {
-            return Err(anyhow!("expected program"));
+            bail!("expected program")
         };
         let body = pair
             .into_inner()
@@ -283,7 +283,7 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                     pair.extract_rules([Rule::ident, Rule::expr, Rule::body]);
                 let iterator = iterator.unwrap().as_string();
                 let target = target.unwrap().try_into()?;
-                let body = body.unwrap().try_map_inner()?;
+                let body = body.unwrap().try_into_inner()?;
                 Ok(Stmt::ForLoop {
                     iterator,
                     target,
@@ -291,7 +291,7 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
                 })
             }
             Rule::infinite_loop => {
-                let body = pair.into_single_inner().unwrap().try_map_inner()?;
+                let body = pair.into_single_inner().unwrap().try_into_inner()?;
                 Ok(Stmt::WhileLoop {
                     condition: Expr::Literal {
                         value: Literal::Bool(true),
@@ -314,7 +314,7 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
             Rule::mod_def => {
                 let [name, body] = pair.extract_rules([Rule::ident, Rule::top_body]);
                 let name = name.unwrap().as_string();
-                let body = body.unwrap().try_map_inner()?;
+                let body = body.unwrap().try_into_inner()?;
                 Ok(Stmt::ModuleDef { name, body })
             }
             Rule::expr => {
@@ -324,10 +324,10 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
             Rule::while_loop => {
                 let [condition, body] = pair.extract_rules([Rule::expr, Rule::body]);
                 let condition = condition.unwrap().try_into()?;
-                let body = body.unwrap().try_map_inner()?;
+                let body = body.unwrap().try_into_inner()?;
                 Ok(Stmt::WhileLoop { condition, body })
             }
-            rule => Err(anyhow!("expected statement: {rule:?}")),
+            rule => bail!("expected statement: {rule:?}"),
         }
     }
 }
@@ -362,7 +362,7 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                 pair.into_single_inner().unwrap().try_into()
             }
             Rule::multiline_expr => Ok(Expr::Multiline {
-                body: pair.try_map_inner()?,
+                body: pair.try_into_inner()?,
             }),
             Rule::expr_bin => {
                 let [lhs, bin_op, rhs] =
@@ -394,15 +394,19 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
             Rule::call => {
                 let [path, args] = pair.extract_rules([Rule::path, Rule::arg_list]);
                 let path = Path(path.unwrap().inner_as_strings());
-                let args = args.unwrap().into_single_inner().unwrap().try_map_inner()?;
+                let args = args
+                    .unwrap()
+                    .into_single_inner()
+                    .unwrap()
+                    .try_into_inner()?;
                 Ok(Expr::Call { path, args })
             }
             Rule::if_expr => {
                 let [condition, then_body, else_body] =
                     pair.extract_rules([Rule::expr, Rule::then_body, Rule::else_body]);
                 let condition = Box::new(condition.unwrap().try_into()?);
-                let then_body = then_body.unwrap().try_map_inner()?;
-                let else_body = else_body.map(PairExt::try_map_inner).transpose()?;
+                let then_body = then_body.unwrap().try_into_inner()?;
+                let else_body = else_body.map(PairExt::try_into_inner).transpose()?;
 
                 Ok(Expr::If {
                     condition,
@@ -418,7 +422,7 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                     Rule::bool => Literal::Bool(value.as_str() == "true"),
                     Rule::nil => Literal::Nil,
                     Rule::array => {
-                        Literal::Array(value.into_single_inner().unwrap().try_map_inner()?)
+                        Literal::Array(value.into_single_inner().unwrap().try_into_inner()?)
                     }
                     _ => unreachable!(),
                 };
@@ -428,7 +432,7 @@ impl TryFrom<Pair<'_, Rule>> for Expr {
                 let name = pair.into_single_inner().unwrap().as_string();
                 Ok(Expr::Variable { name })
             }
-            rule => Err(anyhow!("expected expression: {rule:?}")),
+            rule => bail!("expected expression: {rule:?}"),
         }
     }
 }

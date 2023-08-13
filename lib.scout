@@ -10,12 +10,7 @@ module util
     end
 end
 
-for i in util::range(0, 100)
-    std::print(i, "")
-    if i > 10
-        break
-    end
+
+do
+    break
 end
-std::println()
-std::println("out of loop")
-break

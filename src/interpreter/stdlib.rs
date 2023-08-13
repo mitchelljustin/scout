@@ -1,3 +1,4 @@
+use crate::ast::{BinaryOp, Path};
 use std::io::{stdin, stdout, BufRead, Write};
 
 use crate::interpreter::runtime::Runtime;
@@ -86,8 +87,10 @@ native_functions![
         Ok(
             Value::String(
                 args
-                    .into_iter()
-                    .fold(String::new(), |string, value| string + &value.to_string())
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("")
             )
         )
     }
@@ -193,4 +196,20 @@ pub fn init(env: &mut Runtime) {
     env.end_module();
 
     env.end_module();
+}
+
+pub fn binary_op_to_fn_path(op: BinaryOp) -> Path {
+    let op_fn_name = match op {
+        BinaryOp::Add => "add",
+        BinaryOp::Subtract => "sub",
+        BinaryOp::Multiply => "mul",
+        BinaryOp::Divide => "div",
+        BinaryOp::Less => "lt",
+        BinaryOp::Greater => "gt",
+        BinaryOp::LessEqual => "lte",
+        BinaryOp::GreaterEqual => "gte",
+        BinaryOp::Equal => "eq",
+        BinaryOp::NotEqual => "ne",
+    };
+    [MODULE_STD, MODULE_OPS, op_fn_name].into_iter().collect()
 }

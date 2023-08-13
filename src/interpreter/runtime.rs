@@ -1,5 +1,4 @@
 use crate::ast::{Expr, Literal, Path, Program, Stmt};
-use crate::interpreter;
 use crate::interpreter::error::Result;
 use crate::interpreter::error::RuntimeError::{
     AlreadyDefined, ArityMismatch, ControlFlowException, IllegalControlFlow, ItemNotFound,
@@ -265,7 +264,7 @@ impl Runtime {
                 Literal::Array(exprs) => Value::Array(self.eval_many(exprs)?),
             }),
             Expr::Binary { lhs, op, rhs } => {
-                let path = interpreter::binary_op_to_fn_path(op);
+                let path = stdlib::binary_op_to_fn_path(op);
                 self.resolve_and_call(&path, vec![*lhs, *rhs])
             }
             Expr::Call { path, args } => self.resolve_and_call(&path, args),
@@ -278,12 +277,12 @@ impl Runtime {
 
     fn resolve_and_call(&mut self, path: &Path, args: Vec<Expr>) -> Result {
         let args = self.eval_many(args)?;
-        let ModuleItem::Function(function) = self.resolve_item(path)? else {
+        let ModuleItem::Function(function) = self.resolve_item(path).cloned()? else {
             return Err(TypeMismatch {
                 expected: "module function",
             });
         };
-        match function.clone() {
+        match function {
             Function::Native(native_function) => native_function(args),
             Function::User(UserFunction { params, body, .. }) => {
                 if args.len() != params.len() {
