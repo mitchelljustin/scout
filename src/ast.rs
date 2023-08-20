@@ -158,7 +158,7 @@ fn test_programs() {
         Program {
             body: vec![Stmt::Expr {
                 expr: Expr::Call {
-                    path: ["std", "print"].collect(),
+                    path: ["std", "print"].into_iter().collect(),
                     args: vec![Expr::Literal {
                         value: Literal::Number(1.0),
                     }]
