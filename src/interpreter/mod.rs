@@ -9,22 +9,22 @@ mod runtime;
 mod stdlib;
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Value {
+pub enum Primitive {
     Nil,
     Bool(bool),
     Number(f64),
     String(String),
-    Array(Vec<Value>),
+    Array(Vec<Primitive>),
 }
 
-impl Display for Value {
+impl Display for Primitive {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Nil => write!(f, "nil"),
-            Value::Bool(val) => write!(f, "{val}"),
-            Value::Number(val) => write!(f, "{val}"),
-            Value::String(val) => write!(f, "{val}"),
-            Value::Array(vals) => {
+            Primitive::Nil => write!(f, "nil"),
+            Primitive::Bool(val) => write!(f, "{val}"),
+            Primitive::Number(val) => write!(f, "{val}"),
+            Primitive::String(val) => write!(f, "{val}"),
+            Primitive::Array(vals) => {
                 write!(f, "[")?;
                 for (i, val) in vals.iter().enumerate() {
                     write!(f, "{val}")?;
@@ -38,4 +38,4 @@ impl Display for Value {
     }
 }
 
-pub type NativeFunction = fn(Vec<Value>) -> error::Result;
+pub type NativeFunction = fn(Vec<Primitive>) -> error::Result;

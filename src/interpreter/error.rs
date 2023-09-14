@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use thiserror::Error;
 
-use crate::interpreter::Value;
+use crate::interpreter::Primitive;
 use crate::parse::Path;
 
 #[derive(Error, Debug)]
@@ -39,7 +39,7 @@ pub enum RuntimeError {
     },
 
     #[error("control flow")]
-    ControlFlowException(ControlFlow<Value>),
+    ControlFlowException(ControlFlow<Primitive>),
 }
 
-pub type Result<T = Value, E = RuntimeError> = std::result::Result<T, E>;
+pub type Result<T = Primitive, E = RuntimeError> = std::result::Result<T, E>;

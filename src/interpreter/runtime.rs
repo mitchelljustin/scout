@@ -8,8 +8,8 @@ use crate::interpreter::error::RuntimeError::{
     NoSuchModule, TypeMismatch, UndefinedVariable,
 };
 use crate::interpreter::module::{Function, Module, ModuleItem, UserFunction};
-use crate::interpreter::Value::Nil;
-use crate::interpreter::{stdlib, NativeFunction, Value};
+use crate::interpreter::Primitive::Nil;
+use crate::interpreter::{stdlib, NativeFunction, Primitive};
 use crate::parse::{Expr, Literal, Path, Program, Stmt};
 
 #[derive(Default)]
@@ -48,7 +48,7 @@ impl Runtime {
         })
     }
 
-    fn resolve_var(&self, name: String) -> Result<&Value> {
+    fn resolve_var(&self, name: String) -> Result<&Primitive> {
         for scope in self.scope_stack.iter().rev() {
             if let Some(value) = scope.variables.get(&name) {
                 return Ok(value);
@@ -128,7 +128,7 @@ impl Runtime {
         }
     }
 
-    pub fn eval_source(&mut self, source: &str) -> Result<Value, anyhow::Error> {
+    pub fn eval_source(&mut self, source: &str) -> Result<Primitive, anyhow::Error> {
         let Program { body } = source.parse()?;
         self.eval_multiline(body).map_err(From::from)
     }
@@ -158,7 +158,7 @@ impl Runtime {
                 target,
                 body,
             } => {
-                let Value::Array(target) = self.eval(target)? else {
+                let Primitive::Array(target) = self.eval(target)? else {
                     return Err(TypeMismatch {
                         expected: "array iterator",
                     });
@@ -173,7 +173,7 @@ impl Runtime {
             }
             Stmt::WhileLoop { condition, body } => loop {
                 loop {
-                    let Value::Bool(condition) = self.eval(condition.clone())? else {
+                    let Primitive::Bool(condition) = self.eval(condition.clone())? else {
                         return Err(TypeMismatch {
                             expected: "boolean condition",
                         });
@@ -212,7 +212,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn define_variable(&mut self, name: String, value: Value) -> Result<()> {
+    fn define_variable(&mut self, name: String, value: Primitive) -> Result<()> {
         if let Some(scope) = self
             .scope_stack
             .iter_mut()
@@ -242,7 +242,7 @@ impl Runtime {
                 then_body,
                 else_body,
             } => {
-                let Value::Bool(condition) = self.eval(*condition)? else {
+                let Primitive::Bool(condition) = self.eval(*condition)? else {
                     return Err(TypeMismatch {
                         expected: "boolean condition",
                     });
@@ -263,10 +263,10 @@ impl Runtime {
             }
             Expr::Literal { value } => Ok(match value {
                 Literal::Nil => Nil,
-                Literal::Bool(value) => Value::Bool(value),
-                Literal::Number(value) => Value::Number(value),
-                Literal::String(value) => Value::String(value),
-                Literal::Array(exprs) => Value::Array(self.eval_many(exprs)?),
+                Literal::Bool(value) => Primitive::Bool(value),
+                Literal::Number(value) => Primitive::Number(value),
+                Literal::String(value) => Primitive::String(value),
+                Literal::Array(exprs) => Primitive::Array(self.eval_many(exprs)?),
             }),
             Expr::Binary { lhs, op, rhs } => {
                 let path = stdlib::binary_op_to_fn_path(op);
@@ -276,7 +276,7 @@ impl Runtime {
         }
     }
 
-    fn eval_many(&mut self, exprs: impl IntoIterator<Item = Expr>) -> Result<Vec<Value>> {
+    fn eval_many(&mut self, exprs: impl IntoIterator<Item = Expr>) -> Result<Vec<Primitive>> {
         exprs.into_iter().map(|arg| self.eval(arg)).collect()
     }
 
@@ -353,7 +353,7 @@ impl Runtime {
 #[derive(Debug)]
 pub struct Scope {
     _context: ScopeContext,
-    variables: HashMap<String, Value>,
+    variables: HashMap<String, Primitive>,
 }
 
 #[derive(Debug)]

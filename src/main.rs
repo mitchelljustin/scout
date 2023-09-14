@@ -12,7 +12,7 @@ use std::{fs, io};
 
 use interpreter::Runtime;
 
-use crate::interpreter::Value;
+use crate::interpreter::Primitive;
 
 mod interpreter;
 mod parse;
@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
         let line = line? + "\n";
         match env.eval_source(&line) {
             Err(error) => println!("!! {error}\n"),
-            Ok(Value::Nil) => {}
+            Ok(Primitive::Nil) => {}
             Ok(result) => println!("{result}"),
         }
         print!(">> ");
