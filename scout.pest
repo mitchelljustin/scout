@@ -12,7 +12,8 @@ program = {
 
 top_stmt = {
     func_def |
-    mod_def
+    mod_def |
+    class_def
 }
 
 top_stmt_line = {
@@ -102,8 +103,8 @@ return_stmt = {
 if_expr = {
     "if" ~ expr ~ NEWLINE ~
         then_body ~
-//     ("else" ~ NEWLINE ~
-//         else_body ~ NEWLINE)? ~
+    ("else" ~ NEWLINE ~
+        else_body ~ NEWLINE)? ~
     "end"
 }
 
@@ -122,6 +123,12 @@ bin_op = { add | subtract | multiply | divide | less | greater | less_equal | gr
 
 then_body = { stmt_line* }
 else_body = { stmt_line* }
+
+class_def = {
+    "class" ~ ident ~ NEWLINE ~
+        top_body ~
+    "end"
+}
 
 func_def = {
     "fn" ~ ident ~ "(" ~ param_list ~ ")" ~ "=" ~ expr
@@ -158,7 +165,21 @@ array = { "[" ~ expr_list ~ "]" }
 bool = @{ "true" | "false" }
 nil = @{ "nil" }
 
-KEYWORD = @{ "fn" | "do" | "end" | "module" | "if" | "else" | "for" | "in" | "while" | "loop" | "break" | "continue" }
+KEYWORD = @{
+    "fn"
+    | "do"
+    | "end"
+    | "module"
+    | "if"
+    | "else"
+    | "for"
+    | "in"
+    | "while"
+    | "loop"
+    | "break"
+    | "continue"
+    | "class"
+}
 
 ident = @{
     !(KEYWORD ~ !XID_START) ~

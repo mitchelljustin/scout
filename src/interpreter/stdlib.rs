@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Path};
+use crate::parse::{BinaryOp, Path};
 use std::io::{stdin, stdout, BufRead, Write};
 
 use crate::interpreter::runtime::Runtime;

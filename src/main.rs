@@ -3,6 +3,7 @@
 #![feature(map_try_insert)]
 #![feature(anonymous_lifetime_in_impl_trait)]
 #![feature(let_chains)]
+#![warn(clippy::pedantic)]
 
 extern crate core;
 
@@ -13,8 +14,8 @@ use interpreter::Runtime;
 
 use crate::interpreter::Value;
 
-mod ast;
 mod interpreter;
+mod parse;
 
 fn main() -> anyhow::Result<()> {
     let mut env = Runtime::new();

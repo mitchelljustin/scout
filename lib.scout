@@ -8,9 +8,10 @@ module util
         end
         array
     end
+
+    fn self.swag() = 0
 end
 
-
-do
-    break
+class Test
+    fn test() = 0
 end

@@ -1,4 +1,7 @@
-use crate::ast::{Expr, Literal, Path, Program, Stmt};
+use std::collections::{HashMap, VecDeque};
+use std::ops::ControlFlow::{Break, Continue};
+use std::ops::Deref;
+
 use crate::interpreter::error::Result;
 use crate::interpreter::error::RuntimeError::{
     AlreadyDefined, ArityMismatch, ControlFlowException, IllegalControlFlow, ItemNotFound,
@@ -7,15 +10,22 @@ use crate::interpreter::error::RuntimeError::{
 use crate::interpreter::module::{Function, Module, ModuleItem, UserFunction};
 use crate::interpreter::Value::Nil;
 use crate::interpreter::{stdlib, NativeFunction, Value};
-use std::collections::{HashMap, VecDeque};
-use std::ops::ControlFlow::{Break, Continue};
-use std::ops::Deref;
+use crate::parse::{Expr, Literal, Path, Program, Stmt};
 
 #[derive(Default)]
 pub struct Runtime {
     current_module_path: Path,
     root_module: Module,
     scope_stack: VecDeque<Scope>,
+}
+
+macro handle_control_flow($result:expr) {
+    match $result {
+        Err(ControlFlowException(Break(_))) => break,
+        Err(ControlFlowException(Continue(_))) => continue,
+        Err(error) => return Err(error),
+        Ok(_) => {}
+    }
 }
 
 impl Runtime {
@@ -156,13 +166,9 @@ impl Runtime {
                 for item in target {
                     self.push_scope(ScopeContext::ForLoop);
                     self.define_variable(iterator.clone(), item)?;
-                    match self.eval_multiline(body.clone()) {
-                        Err(ControlFlowException(Break(_))) => break,
-                        Err(ControlFlowException(Continue(_))) => continue,
-                        Err(error) => return Err(error),
-                        Ok(_) => {}
-                    }
+                    let result = self.eval_multiline(body.clone());
                     self.pop_scope();
+                    handle_control_flow!(result);
                 }
             }
             Stmt::WhileLoop { condition, body } => loop {
@@ -176,13 +182,9 @@ impl Runtime {
                         return Ok(());
                     }
                     self.push_scope(ScopeContext::WhileLoop);
-                    match self.eval_multiline(body.clone()) {
-                        Err(ControlFlowException(Break(_))) => break,
-                        Err(ControlFlowException(Continue(_))) => continue,
-                        Err(error) => return Err(error),
-                        Ok(_) => {}
-                    }
+                    let result = self.eval_multiline(body.clone());
                     self.pop_scope();
+                    handle_control_flow!(result);
                 }
             },
             Stmt::Return { .. } => {
@@ -202,6 +204,9 @@ impl Runtime {
                     keyword: "continue",
                     expected_context: "loop",
                 })
+            }
+            Stmt::ClassDef { .. } => {
+                unimplemented!()
             }
         }
         Ok(())

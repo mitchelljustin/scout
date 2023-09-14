@@ -2,8 +2,8 @@ use std::ops::ControlFlow;
 
 use thiserror::Error;
 
-use crate::ast::Path;
 use crate::interpreter::Value;
+use crate::parse::Path;
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {

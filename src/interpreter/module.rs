@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::ast::{Expr, Path};
 use crate::interpreter::error::RuntimeError::AlreadyDefined;
 use crate::interpreter::{error, NativeFunction};
+use crate::parse::{Expr, Path};
 
 #[derive(Clone)]
 pub struct UserFunction {
@@ -24,10 +24,15 @@ pub struct Module {
 }
 
 #[derive(Clone)]
+pub struct Class {
+    pub(crate) path: Path,
+}
+
+#[derive(Clone)]
 pub enum ModuleItem {
     Function(Function),
     Module(Module),
-    // Variable(Value),
+    Class(Class),
 }
 
 impl Module {
