@@ -9,7 +9,15 @@ module util
         array
     end
 
-    fn self.swag() = 0
+    fn repeat(string, times) = do
+        result = ""
+        for _ in util::range(0, times)
+            result = result + string
+        end
+        result
+    end
+
+    fn zero() = 0
 end
 
 class Test

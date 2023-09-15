@@ -18,7 +18,11 @@ macro_rules! native_function_def {
     ($fn_name:ident () $body:tt) => {
         fn $fn_name(args: Vec<Primitive>) -> $crate::interpreter::error::Result {
             if !args.is_empty() {
-                return Err($crate::interpreter::RuntimeError::ArityMismatch { expected: 0, actual: args.len() });
+                return Err($crate::interpreter::RuntimeError::ArityMismatch {
+                    function: stringify!($fn_name).to_string(),
+                    expected: 0,
+                    actual: args.len()
+                });
             }
             $body
         }
@@ -33,7 +37,11 @@ macro_rules! native_function_def {
             const ARITY: usize = count!($($arg)+);
             let actual = args.len();
             let Ok([$($arg),+]) = <[Primitive; ARITY]>::try_from(args) else {
-                return Err($crate::interpreter::RuntimeError::ArityMismatch { expected: ARITY, actual });
+                return Err($crate::interpreter::RuntimeError::ArityMismatch {
+                    function: stringify!($fn_name).to_string(),
+                    expected: ARITY,
+                    actual
+                });
             };
             $body
         }
@@ -198,7 +206,7 @@ pub fn init(env: &mut Runtime) {
     env.end_module();
 }
 
-pub fn binary_op_to_fn_path(op: BinaryOp) -> Path {
+pub fn binary_op_to_fn_path(op: &BinaryOp) -> Path {
     let op_fn_name = match op {
         BinaryOp::Add => "add",
         BinaryOp::Subtract => "sub",

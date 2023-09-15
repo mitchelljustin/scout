@@ -5,10 +5,15 @@ use thiserror::Error;
 use crate::interpreter::Primitive;
 use crate::parse::Path;
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Error, Debug)]
 pub enum RuntimeError {
-    #[error("arity mismatch: expected {expected} args, got {actual} args")]
-    ArityMismatch { expected: usize, actual: usize },
+    #[error("arity mismatch: {function})() expected {expected} args, got {actual} args")]
+    ArityMismatch {
+        function: String,
+        expected: usize,
+        actual: usize,
+    },
 
     #[error("type mismatch: expected {expected}")]
     TypeMismatch { expected: &'static str },

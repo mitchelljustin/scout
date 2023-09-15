@@ -16,12 +16,14 @@ top_stmt = {
     class_def
 }
 
+noop = { NEWLINE }
+
 top_stmt_line = {
-    NEWLINE | (top_stmt ~ NEWLINE)
+    noop | (top_stmt ~ NEWLINE)
 }
 
 stmt_line = {
-    NEWLINE | (stmt ~ NEWLINE)
+    noop | (stmt ~ NEWLINE)
 }
 
 stmt = {
@@ -183,7 +185,7 @@ KEYWORD = @{
 
 ident = @{
     !(KEYWORD ~ !XID_START) ~
-    XID_START ~ XID_CONTINUE*
+    (XID_START | "_") ~ XID_CONTINUE*
 }
 
 number = @{

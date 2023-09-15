@@ -4,10 +4,10 @@ use std::ops::Deref;
 
 use crate::interpreter::error::Result;
 use crate::interpreter::error::RuntimeError::{
-    AlreadyDefined, ArityMismatch, ControlFlowException, IllegalControlFlow, ItemNotFound,
-    NoSuchModule, TypeMismatch, UndefinedVariable,
+    ArityMismatch, ControlFlowException, IllegalControlFlow, ItemNotFound, NoSuchModule,
+    TypeMismatch, UndefinedVariable,
 };
-use crate::interpreter::module::{Function, Module, ModuleItem, UserFunction};
+use crate::interpreter::module::{Function, Item, Module, UserFunction};
 use crate::interpreter::Primitive::Nil;
 use crate::interpreter::{stdlib, NativeFunction, Primitive};
 use crate::parse::{Expr, Literal, Path, Program, Stmt};
@@ -22,14 +22,14 @@ pub struct Runtime {
 macro handle_control_flow($result:expr) {
     match $result {
         Err(ControlFlowException(Break(_))) => break,
-        Err(ControlFlowException(Continue(_))) => continue,
+        Err(ControlFlowException(Continue(()))) => continue,
         Err(error) => return Err(error),
         Ok(_) => {}
     }
 }
 
 impl Runtime {
-    fn resolve_item(&self, path: &Path) -> Result<&ModuleItem> {
+    fn resolve_item(&self, path: &Path) -> Result<&Item> {
         let (module, item_name) = match path.0.as_slice() {
             [item_name] => (self.current_module(), item_name),
             [module_path @ .., item_name] => {
@@ -40,7 +40,7 @@ impl Runtime {
                 };
                 (module, item_name)
             }
-            pat => unreachable!("path pattern: {pat:?}"),
+            pat => unreachable!("path pattern: {:?}", pat),
         };
         module.items.get(item_name).ok_or(ItemNotFound {
             path: module.path.clone(),
@@ -64,7 +64,7 @@ impl Runtime {
     fn find_module(&self, path: impl Iterator<Item = &String>) -> Option<&Module> {
         let mut module = &self.root_module;
         for step in path {
-            let Some(ModuleItem::Module(sub_module)) = module.items.get(step) else {
+            let Some(Item::Module(sub_module)) = module.items.get(step) else {
                 return None;
             };
             module = sub_module;
@@ -75,7 +75,7 @@ impl Runtime {
     fn find_module_mut(&mut self, path: impl Iterator<Item = &String>) -> Option<&mut Module> {
         let mut module = &mut self.root_module;
         for step in path {
-            let Some(ModuleItem::Module(sub_module)) = module.items.get_mut(step) else {
+            let Some(Item::Module(sub_module)) = module.items.get_mut(step) else {
                 return None;
             };
             module = sub_module;
@@ -89,19 +89,7 @@ impl Runtime {
     }
 
     pub(crate) fn define_module(&mut self, module_name: String) -> Result<()> {
-        let current_module = self.current_module_mut();
-        let module = Module {
-            path: &current_module.path + module_name.clone(),
-            items: Default::default(),
-        };
-        current_module
-            .items
-            .try_insert(module_name.clone(), ModuleItem::Module(module))
-            .map_err(|_| AlreadyDefined {
-                item_type: "module",
-                item_name: module_name.clone(),
-                path: current_module.path.clone(),
-            })?;
+        self.current_module_mut().define_module(&module_name)?;
         self.current_module_path.0.push(module_name);
         Ok(())
     }
@@ -123,7 +111,7 @@ impl Runtime {
     ) {
         for (name, function) in functions {
             self.current_module_mut()
-                .define_native(name.to_string(), function)
+                .define_native_function(name.to_string(), function)
                 .unwrap();
         }
     }
@@ -144,11 +132,11 @@ impl Runtime {
             }
             Stmt::FunctionDef { body, name, params } => {
                 self.current_module_mut()
-                    .define_function(UserFunction { name, params, body })?;
+                    .define_user_function(UserFunction { name, params, body })?;
             }
             Stmt::VariableDef { name, value } => {
                 let value = self.eval(value)?;
-                self.define_variable(name, value)?;
+                self.define_variable(name, value);
             }
             Stmt::Expr { expr } => {
                 self.eval(expr)?;
@@ -165,7 +153,7 @@ impl Runtime {
                 };
                 for item in target {
                     self.push_scope(ScopeContext::ForLoop);
-                    self.define_variable(iterator.clone(), item)?;
+                    self.define_variable(iterator.clone(), item);
                     let result = self.eval_multiline(body.clone());
                     self.pop_scope();
                     handle_control_flow!(result);
@@ -205,14 +193,19 @@ impl Runtime {
                     expected_context: "loop",
                 })
             }
-            Stmt::ClassDef { .. } => {
-                unimplemented!()
+            Stmt::ClassDef { name, body } => {
+                self.define_module(name)?;
+                for stmt in body {
+                    self.exec(stmt)?;
+                }
+                self.end_module();
             }
+            Stmt::Noop => {}
         }
         Ok(())
     }
 
-    fn define_variable(&mut self, name: String, value: Primitive) -> Result<()> {
+    fn define_variable(&mut self, name: String, value: Primitive) {
         if let Some(scope) = self
             .scope_stack
             .iter_mut()
@@ -227,7 +220,6 @@ impl Runtime {
                 .variables
                 .insert(name, value);
         }
-        Ok(())
     }
 
     fn eval(&mut self, expr: Expr) -> Result {
@@ -269,7 +261,7 @@ impl Runtime {
                 Literal::Array(exprs) => Primitive::Array(self.eval_many(exprs)?),
             }),
             Expr::Binary { lhs, op, rhs } => {
-                let path = stdlib::binary_op_to_fn_path(op);
+                let path = stdlib::binary_op_to_fn_path(&op);
                 self.resolve_and_call(&path, vec![*lhs, *rhs])
             }
             Expr::Call { path, args } => self.resolve_and_call(&path, args),
@@ -282,16 +274,17 @@ impl Runtime {
 
     fn resolve_and_call(&mut self, path: &Path, args: Vec<Expr>) -> Result {
         let args = self.eval_many(args)?;
-        let ModuleItem::Function(function) = self.resolve_item(path).cloned()? else {
+        let Item::Function(function) = self.resolve_item(path).cloned()? else {
             return Err(TypeMismatch {
                 expected: "module function",
             });
         };
         match function {
             Function::Native(native_function) => native_function(args),
-            Function::User(UserFunction { params, body, .. }) => {
+            Function::User(UserFunction { params, body, name }) => {
                 if args.len() != params.len() {
                     return Err(ArityMismatch {
+                        function: path.to_string(),
                         expected: params.len(),
                         actual: args.len(),
                     });
@@ -301,7 +294,7 @@ impl Runtime {
                     arity: params.len(),
                 });
                 for (arg, param) in args.into_iter().zip(params) {
-                    self.define_variable(param, arg)?;
+                    self.define_variable(param, arg);
                 }
                 let result = match body.clone() {
                     Expr::Multiline { body } => self.eval_multiline(body),
@@ -345,7 +338,7 @@ impl Runtime {
     fn push_scope(&mut self, context: ScopeContext) {
         self.scope_stack.push_back(Scope {
             _context: context,
-            variables: Default::default(),
+            variables: HashMap::default(),
         });
     }
 }

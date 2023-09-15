@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::ops::Add;
@@ -81,6 +80,7 @@ pub enum Literal {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
+    Noop,
     ModuleDef {
         name: String,
         body: Vec<Stmt>,
@@ -144,14 +144,6 @@ fn pretty_print_pair(pair: Pair<Rule>, indent_level: usize) {
     }
 }
 
-struct ByRule<'a, R>(HashMap<R, Vec<Pair<'a, R>>>);
-
-impl<'a, R: Eq + Hash> ByRule<'a, R> {
-    pub fn pop(&mut self, rule: R) -> Option<Pair<'a, R>> {
-        self.0.get_mut(&rule).and_then(Vec::pop)
-    }
-}
-
 #[test]
 fn test_programs() {
     let ast: Program = "".parse().unwrap();
@@ -179,7 +171,6 @@ where
     fn as_string(&self) -> String;
     fn inner_as_strings(self) -> Vec<String>;
     fn into_single_inner(self) -> Option<Pair<'a, R>>;
-    fn into_by_rule(self) -> ByRule<'a, R>;
     fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
     where
         T: TryFrom<Pair<'a, R>>,
@@ -207,20 +198,12 @@ where
         self.into_inner().next()
     }
 
-    fn into_by_rule(self) -> ByRule<'a, R> {
-        let mut map = HashMap::<_, Vec<_>>::new();
-        for pair in self.into_inner() {
-            map.entry(pair.as_rule()).or_default().push(pair);
-        }
-        ByRule(map)
-    }
-
     fn try_map_inner<T, Col>(self) -> Result<Col, T::Error>
     where
         T: TryFrom<Pair<'a, R>>,
         Col: FromIterator<T>,
     {
-        self.into_inner().map(TryFrom::try_from).collect()
+        self.into_inner().map(T::try_from).collect()
     }
 
     fn map_inner<T, Col>(self) -> Col
@@ -232,8 +215,14 @@ where
     }
 
     fn extract_rules<const N: usize>(self, rules: [R; N]) -> [Option<Pair<'a, R>>; N] {
-        let mut by_rule = self.into_by_rule();
-        rules.map(|rule| by_rule.pop(rule))
+        let mut inner = self.into_inner();
+        rules.map(|expected_rule| {
+            let pair = inner.next()?;
+            if pair.as_rule() != expected_rule {
+                return None;
+            }
+            Some(pair)
+        })
     }
 }
 
@@ -270,6 +259,7 @@ impl TryFrom<Pair<'_, Rule>> for Stmt {
         let rule = pair.as_rule();
         let _literal = pair.as_str();
         match rule {
+            Rule::noop => Ok(Stmt::Noop),
             Rule::stmt_line | Rule::stmt | Rule::top_stmt | Rule::top_stmt_line => {
                 pair.into_single_inner().unwrap().try_into()
             }
